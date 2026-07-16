@@ -7,24 +7,24 @@ namespace cat {
 
 struct Parameter {
   std::string name;
-  Type ty;
+  ast::Type ty;
 };
 
 struct FunctionDecl {
   std::string name;
   std::vector<Parameter> params;
-  std::optional<Type> return_type;
+  std::optional<ast::Type> return_type;
 };
 
 struct Field {
   std::string name;
-  Type ty;
+  ast::Type ty;
   std::optional<ExprNode> init;
 };
 
 struct GlobalVar {
   std::string name;
-  std::optional<Type> ty;
+  std::optional<ast::Type> ty;
   std::optional<ExprNode> init;
 };
 
@@ -85,7 +85,7 @@ inline Item make_impl(std::optional<std::string> trait_name,
 }
 
 inline Item make_global_var(std::string name,
-                            std::optional<Type> ty = std::nullopt,
+                            std::optional<ast::Type> ty = std::nullopt,
                             std::optional<ExprNode> init = std::nullopt) {
   return Item{GlobalVar{std::move(name), std::move(ty), std::move(init)}};
 }

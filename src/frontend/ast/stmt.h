@@ -7,7 +7,7 @@ struct Block;
 
 struct VarDefStmt {
   string name;
-  optional<Type> ty;
+  optional<ast::Type> ty;
   optional<ExprNode> init;
 };
 
@@ -52,7 +52,7 @@ struct Block {
 };
 
 inline Stmt make_var_def(std::string name,
-                         std::optional<Type> ty = std::nullopt,
+                         std::optional<ast::Type> ty = std::nullopt,
                          std::optional<ExprNode> init = std::nullopt) {
   return Stmt{VarDefStmt{std::move(name), std::move(ty), std::move(init)}};
 }

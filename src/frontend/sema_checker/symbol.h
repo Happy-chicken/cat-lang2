@@ -13,8 +13,8 @@ struct VariableData {
 };
 
 struct FunctionData {
-  vector<Type> params;
-  Type return_type;
+  vector<ast::Type> params;
+  ast::Type return_type;
 };
 
 struct TypeData {}; // 仅标记类型
@@ -24,7 +24,7 @@ struct ParameterData {
 };
 
 struct ClassData {
-  vector<std::pair<string, Type>> fields;
+  vector<std::pair<string, ast::Type>> fields;
 };
 
 struct TraitData {
@@ -44,17 +44,19 @@ public:
   Symbol(Symbol &&) = default;
   Symbol &operator=(Symbol &&) = default;
 
-  static Symbol new_variable(string name, optional<Type> ty, bool is_mutable,
-                             Span span);
+  static Symbol new_variable(string name, optional<ast::Type> ty,
+                             bool is_mutable, Span span);
 
-  static Symbol new_function(string name, vector<Type> params, Type return_type,
-                             Span span);
+  static Symbol new_function(string name, vector<ast::Type> params,
+                             ast::Type return_type, Span span);
 
-  static Symbol new_parameter(string name, Type ty, bool is_ref, Span span);
+  static Symbol new_parameter(string name, ast::Type ty, bool is_ref,
+                              Span span);
 
   static Symbol new_type(string name, Span span);
 
-  static Symbol new_class(string name, vector<std::pair<string, Type>> fields,
+  static Symbol new_class(string name,
+                          vector<std::pair<string, ast::Type>> fields,
                           Span span);
 
   static Symbol new_trait(string name, vector<string> methods, Span span);
@@ -67,7 +69,7 @@ public:
 
   const SymbolKind &get_kind() const noexcept { return kind; }
   const string &get_name() const noexcept { return name; }
-  const optional<Type> &get_type() const noexcept { return type; }
+  const optional<ast::Type> &get_type() const noexcept { return type; }
   size_t get_scope_depth() const noexcept { return scope_depth; }
   void set_scope_depth(size_t depth) noexcept { scope_depth = depth; }
   const Span &get_span() const noexcept { return span_; }
@@ -75,12 +77,12 @@ public:
 private:
   SymbolKind kind;
   string name;
-  optional<Type> type;
+  optional<ast::Type> type;
   size_t scope_depth;
   Span span_;
 
-  Symbol(SymbolKind kind, string name, optional<Type> ty, size_t scope_depth,
-         Span span);
+  Symbol(SymbolKind kind, string name, optional<ast::Type> ty,
+         size_t scope_depth, Span span);
 };
 
 } // namespace cat

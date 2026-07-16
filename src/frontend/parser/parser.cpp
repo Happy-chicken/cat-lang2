@@ -336,7 +336,7 @@ error::ParseResult<StmtNode> Parser::parse_var_def_stmt() {
     return std::nullopt;
   }
   string var_name = var_token->lexeme;
-  std::optional<Type> ty = std::nullopt;
+  std::optional<ast::Type> ty = std::nullopt;
   if (check(TokenKind::Colon)) {
     advance(); // consume ':'
     auto type = parse_type();
@@ -596,7 +596,8 @@ error::ParseResult<ExprNode> Parser::parse_postfix() {
     return std::nullopt;
   }
   while (true) {
-    if (!current_token.has_value()) return expr;
+    if (!current_token.has_value())
+      return expr;
     switch (current_token->kind) {
     case TokenKind::LeftParen: {
       auto call_result = finish_call(std::move(*expr));
@@ -751,36 +752,36 @@ error::ParseResult<Block> Parser::parse_block() {
   return Block{std::move(stmts)};
 }
 
-error::ParseResult<Type> Parser::parse_type() {
+error::ParseResult<ast::Type> Parser::parse_type() {
   switch (current_token->kind) {
   case TokenKind::Int: {
     advance();
-    return type_int();
+    return ast::type_int();
   }
   case TokenKind::Float: {
     advance();
-    return type_float();
+    return ast::type_float();
   }
   case TokenKind::Bool: {
     advance();
-    return type_bool();
+    return ast::type_bool();
   }
   case TokenKind::Char: {
     advance();
-    return type_char();
+    return ast::type_char();
   }
   case TokenKind::Str: {
     advance();
-    return type_str();
+    return ast::type_str();
   }
   case TokenKind::None: {
     advance();
-    return type_void();
+    return ast::type_void();
   }
   case TokenKind::Identifier: {
     auto class_name = current_token->lexeme;
     advance();
-    return type_class(class_name);
+    return ast::type_class(class_name);
   }
   case TokenKind::Ptr: {
     advance();
@@ -803,7 +804,7 @@ error::ParseResult<Type> Parser::parse_type() {
     return type_list(std::move(*element_type));
   }
   default:
-    return unexpected<Type>("Unexpected in type");
+    return unexpected<ast::Type>("Unexpected in type");
   }
 }
 
@@ -847,7 +848,7 @@ error::ParseResult<FunctionDecl> Parser::parse_header() {
     }
   }
   consume(TokenKind::RightParen, "Expected ')' after parameters.");
-  std::optional<Type> return_type = std::nullopt;
+  std::optional<ast::Type> return_type = std::nullopt;
   if (check(TokenKind::Arrow)) {
     advance(); // consume '->'
     auto ret_type = parse_type();
@@ -945,7 +946,7 @@ error::ParseResult<Field> Parser::parse_field() {
     return std::nullopt;
   }
   string field_name = field_token->lexeme;
-  std::optional<Type> ty = std::nullopt;
+  std::optional<ast::Type> ty = std::nullopt;
   consume(TokenKind::Colon, "Expected ':' after field name.");
   auto field_type = parse_type();
   if (!field_type.has_value()) {
@@ -994,7 +995,7 @@ error::ParseResult<GlobalVar> Parser::parse_global_var() {
     return std::nullopt;
   }
   string var_name = var_token->lexeme;
-  std::optional<Type> ty = std::nullopt;
+  std::optional<ast::Type> ty = std::nullopt;
   if (check(TokenKind::Colon)) {
     advance(); // consume ':'
     auto type = parse_type();

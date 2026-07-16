@@ -64,7 +64,7 @@ private:
   error::ParseResult<StmtNode> parse_var_def_stmt();
 
   error::ParseResult<Block> parse_block();
-  error::ParseResult<Type> parse_type();
+  error::ParseResult<ast::Type> parse_type();
   error::ParseResult<Parameter> parse_parameter();
   error::ParseResult<FunctionDecl> parse_header();
   error::ParseResult<FunctionDecl> parse_func_decl();

@@ -385,8 +385,8 @@ void print_item_impl(std::ostream &os, const std::string &prefix, bool is_last,
 
 } // namespace
 
-void print_type(std::ostream &os, const cat::Type &type) {
-  os << type_to_string(type);
+void print_type(std::ostream &os, const cat::ast::Type &type) {
+  os << ast::type_to_string(type);
 }
 
 void print_expr_node(std::ostream &os, const std::string &prefix, bool is_last,

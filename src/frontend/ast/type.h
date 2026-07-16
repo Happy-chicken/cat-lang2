@@ -6,7 +6,7 @@
 #include <utility>
 #include <variant>
 
-namespace cat {
+namespace cat::ast {
 
 struct Type {
 
@@ -128,4 +128,4 @@ inline Type type_class(std::string name) {
 // };
 // } // namespace std
 
-} // namespace cat
+} // namespace cat::ast
