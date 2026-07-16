@@ -13,6 +13,7 @@ struct CallExpr;
 struct MemberExpr;
 struct IndexExpr;
 struct ListExpr;
+struct ExprNode;
 
 using Expr = std::variant<LiteralExpr, Variable, AssignExpr, BinaryExpr,
                           UnaryExpr, CallExpr, MemberExpr, IndexExpr, ListExpr>;
@@ -37,38 +38,38 @@ struct Variable {
 };
 
 struct AssignExpr {
-  uptr<Expr> target;
-  uptr<Expr> value;
+  uptr<ExprNode> target;
+  uptr<ExprNode> value;
 };
 
 struct BinaryExpr {
   BinaryOp op;
-  uptr<Expr> lhs;
-  uptr<Expr> rhs;
+  uptr<ExprNode> lhs;
+  uptr<ExprNode> rhs;
 };
 
 struct UnaryExpr {
   UnaryOp op;
-  uptr<Expr> expr;
+  uptr<ExprNode> expr;
 };
 
 struct CallExpr {
-  uptr<Expr> callee;
-  vector<uptr<Expr>> args;
+  uptr<ExprNode> callee;
+  vector<uptr<ExprNode>> args;
 };
 
 struct MemberExpr {
-  uptr<Expr> object;
+  uptr<ExprNode> object;
   std::string field;
 };
 
 struct IndexExpr {
-  uptr<Expr> object;
-  uptr<Expr> index;
+  uptr<ExprNode> object;
+  uptr<ExprNode> index;
 };
 
 struct ListExpr {
-  vector<uptr<Expr>> elements;
+  vector<uptr<ExprNode>> elements;
 };
 
 struct ExprNode {
@@ -88,31 +89,31 @@ inline auto make_variable(std::string name) {
   return Expr{Variable{std::move(name)}};
 }
 
-inline auto make_assign(uptr<Expr> target, uptr<Expr> value) {
+inline auto make_assign(uptr<ExprNode> target, uptr<ExprNode> value) {
   return Expr{AssignExpr{std::move(target), std::move(value)}};
 }
 
-inline auto make_binary(BinaryOp op, uptr<Expr> lhs, uptr<Expr> rhs) {
+inline auto make_binary(BinaryOp op, uptr<ExprNode> lhs, uptr<ExprNode> rhs) {
   return Expr{BinaryExpr{op, std::move(lhs), std::move(rhs)}};
 }
 
-inline auto make_unary(UnaryOp op, uptr<Expr> expr) {
+inline auto make_unary(UnaryOp op, uptr<ExprNode> expr) {
   return Expr{UnaryExpr{op, std::move(expr)}};
 }
 
-inline auto make_call(uptr<Expr> callee, vector<uptr<Expr>> args) {
+inline auto make_call(uptr<ExprNode> callee, vector<uptr<ExprNode>> args) {
   return Expr{CallExpr{std::move(callee), std::move(args)}};
 }
 
-inline auto make_member(uptr<Expr> object, std::string field) {
+inline auto make_member(uptr<ExprNode> object, std::string field) {
   return Expr{MemberExpr{std::move(object), std::move(field)}};
 }
 
-inline auto make_index(uptr<Expr> object, uptr<Expr> index) {
+inline auto make_index(uptr<ExprNode> object, uptr<ExprNode> index) {
   return Expr{IndexExpr{std::move(object), std::move(index)}};
 }
 
-inline auto make_list(vector<uptr<Expr>> elements) {
+inline auto make_list(vector<uptr<ExprNode>> elements) {
   return Expr{ListExpr{std::move(elements)}};
 }
 
