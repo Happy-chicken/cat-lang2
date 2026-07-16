@@ -4,19 +4,7 @@
 #include <variant>
 namespace cat {
 
-struct LiteralExpr;
-struct Variable;
-struct AssignExpr;
-struct BinaryExpr;
-struct UnaryExpr;
-struct CallExpr;
-struct MemberExpr;
-struct IndexExpr;
-struct ListExpr;
 struct ExprNode;
-
-using Expr = std::variant<LiteralExpr, Variable, AssignExpr, BinaryExpr,
-                          UnaryExpr, CallExpr, MemberExpr, IndexExpr, ListExpr>;
 
 enum class BinaryOp { Add, Sub, Mul, Div, Eq, NotEq, Lt, Gt, Le, Ge, And, Or };
 
@@ -72,16 +60,19 @@ struct ListExpr {
   vector<uptr<ExprNode>> elements;
 };
 
+using Expr = std::variant<LiteralExpr, Variable, AssignExpr, BinaryExpr,
+                          UnaryExpr, CallExpr, MemberExpr, IndexExpr, ListExpr>;
+
 struct ExprNode {
   Span span;
   Expr expr;
 };
 
-inline auto make_literal(int64_t v) { return Expr{LiteralExpr{v}}; }
-inline auto make_literal(bool v) { return Expr{LiteralExpr{v}}; }
-inline auto make_literal(float v) { return Expr{LiteralExpr{v}}; }
-inline auto make_literal(char v) { return Expr{LiteralExpr{v}}; }
-inline auto make_literal(std::string v) {
+inline auto make_int_literal(int64_t v) { return Expr{LiteralExpr{v}}; }
+inline auto make_bool_literal(bool v) { return Expr{LiteralExpr{v}}; }
+inline auto make_float_literal(float v) { return Expr{LiteralExpr{v}}; }
+inline auto make_char_literal(char v) { return Expr{LiteralExpr{v}}; }
+inline auto make_string_literal(std::string v) {
   return Expr{LiteralExpr{std::move(v)}};
 }
 
