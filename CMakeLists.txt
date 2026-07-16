@@ -49,7 +49,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/backend)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/ast)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/lexer)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/parser)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/sema_chcker)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/sema_checker)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/type_checker)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ast_optimizer)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer)
@@ -64,7 +64,7 @@ file(GLOB_RECURSE SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/ast/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/lexer/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/parser/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/sema_chcker/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/sema_checker/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/type_checker/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ast_optimizer/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer/*.cpp"
