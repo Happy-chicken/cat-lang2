@@ -40,13 +40,13 @@ public:
     [[nodiscard]] Token next_token();
     [[nodiscard]] vector<Token> tokenize();
 
-    [[nodiscard]] const Token& operator*() const { return current_; }
-    Lexer& operator++();
+    [[nodiscard]] const Token &operator*() const { return current_; }
+    Lexer &operator++();
     [[nodiscard]] bool operator==(std::default_sentinel_t) const { return started_ && current_.kind == TokenKind::TokenEOF; }
 
-    Lexer& begin() {
-        if (!started_) static_cast<void>(next_token());
-        return *this;
+    Lexer &begin() {
+      if (!started_) static_cast<void>(next_token());
+      return *this;
     }
     [[nodiscard]] std::default_sentinel_t end() const { return std::default_sentinel; }
   };
