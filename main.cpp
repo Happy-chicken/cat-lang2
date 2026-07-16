@@ -3,6 +3,9 @@
 #include "./src/frontend/ast/printer.h"
 #include "./src/frontend/lexer/lexer.h"
 #include "./src/frontend/parser/parser.h"
+#include "./src/frontend/sema_checker/pass_manager.h"
+#include "./src/frontend/sema_checker/sema_checker.h"
+#include "resolver.h"
 #include <iostream>
 
 int main() {
@@ -48,8 +51,12 @@ impl Printable for Point {
   auto program = parser.parse_program();
   cat::ast::print(std::cout, program);
 
+  cat::PassManager pm;
+  pm.add_pass(std::make_unique<cat::Resolver>());
+  pm.run(program, diag_ctxt);
+
   if (diag_ctxt.has_errors()) {
-    std::cerr << "\n--- Parse Errors ---\n";
+    std::cerr << "\n--- Errors ---\n";
     diag_ctxt.print_all(std::cerr);
   }
 
