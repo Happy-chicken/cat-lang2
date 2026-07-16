@@ -9,6 +9,7 @@
 #include <ostream>
 #include <utility>
 #include <optional>
+#include "span.h"
 using std::string;
 using std::vector;
 using std::unordered_map;
