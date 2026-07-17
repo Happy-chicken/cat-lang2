@@ -36,7 +36,7 @@ trait Printable {
 }
 
 impl Printable for Point {
-  def print(self: ptr<str>) -> str {
+  def print(self: Point) -> str {
     return "Point";
   }
 }
@@ -51,8 +51,9 @@ impl Printable for Point {
   auto program = parser.parse_program();
   cat::ast::print(std::cout, program);
 
-  cat::PassManager pm;
+  cat::semantics::PassManager pm;
   pm.add_pass(std::make_unique<cat::Resolver>());
+  pm.add_pass(std::make_unique<cat::SemaChecker>());
   pm.run(program, diag_ctxt);
 
   if (diag_ctxt.has_errors()) {

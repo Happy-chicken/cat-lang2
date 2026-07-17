@@ -5,7 +5,7 @@
 #include "pass_interface.h"
 #include "sema_ctx.h"
 
-namespace cat {
+namespace cat::semantics {
 
   class PassManager {
 public:

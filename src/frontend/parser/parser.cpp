@@ -804,7 +804,8 @@ namespace cat {
     if (!param_type.has_value()) {
       return std::nullopt;
     }
-    return Parameter{std::move(param_name), std::move(*param_type)};
+    // TODO:
+    return Parameter{std::move(param_name), std::move(*param_type), false};
   }
 
   error::ParseResult<FunctionDecl> Parser::parse_header() {

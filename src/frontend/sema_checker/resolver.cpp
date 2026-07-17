@@ -35,21 +35,21 @@ namespace cat {
     for (const auto &item_node: program.items) {
       std::visit(
           overloaded{
-              [&](Class &cls) { declare_type_item(item_node, ctx, diag); },
-              [&](Trait &tr) { declare_trait_item(item_node, ctx, diag); },
-              [&](Impl &imp) {
+              [&](const Class &cls) { declare_type_item(item_node, ctx, diag); },
+              [&](const Trait &tr) { declare_trait_item(item_node, ctx, diag); },
+              [&](const Impl &imp) {
                 declare_impl_methods(imp, item_node.span, ctx, diag);
                 validate_impl_target(imp, item_node.span, ctx, diag);
               },
-              [&](FunctionDef &fn) { declare_value_item(item_node, ctx, diag); },
-              [&](GlobalVar &gv) { declare_global_var(gv, item_node.span, ctx, diag); },
+              [&](const FunctionDef &fn) { declare_value_item(item_node, ctx, diag); },
+              [&](const GlobalVar &gv) { declare_global_var(gv, item_node.span, ctx, diag); },
               [](const auto &) {}
           },
           item_node.item
       );
     }
     check_struct_recursion(program, diag);
-    return true;
+    return !diag.has_errors();
   }
 
   void Resolver::declare_top_level(Symbol symbol, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
@@ -191,13 +191,13 @@ namespace cat {
     }
   }
 
-  void Resolver::declare_global_var(GlobalVar &gv, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
+  void Resolver::declare_global_var(const GlobalVar &gv, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
     optional<ast::Type> ty = gv.ty ? optional<ast::Type>(gv.ty->clone()) : std::nullopt;
     Symbol sym = Symbol::new_variable(gv.name, std::move(ty), false, span);
     declare_top_level(std::move(sym), ctx, diag);
   }
 
-  void Resolver::validate_impl_target(Impl &impl, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
+  void Resolver::validate_impl_target(const Impl &impl, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
     if (!ctx.get_symbol_table().resolve_global(impl.class_name)) {
       diag.error(span, "class `" + impl.class_name + "` not found")
           .emit_to(diag);

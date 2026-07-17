@@ -7,9 +7,9 @@
 namespace cat {
   class Resolver : public semantics::Pass {
 public:
-    const char *name() const noexcept { return "Resolver"; }
+    const char *name() const noexcept override{ return "Resolver"; }
 
-    bool run(Program &program, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
+    bool run(Program &program, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) override;
 
     void declare_top_level(Symbol symbol, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
 
@@ -19,11 +19,11 @@ public:
 
     void declare_value_item(const ItemNode &item_node, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
 
-    void declare_impl_methods(const Impl &imp, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
+  void declare_impl_methods(const Impl &imp, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
 
-    void declare_global_var(GlobalVar &gv, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
+  void declare_global_var(const GlobalVar &gv, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
 
-    void validate_impl_target(Impl &impl, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
+  void validate_impl_target(const Impl &impl, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
 
     void collect_class_deps(const ast::Type &ty, vector<string> &deps);
 

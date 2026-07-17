@@ -9,9 +9,9 @@ namespace cat {
 
   struct Scope {
     ScopeKind kind;
-    unordered_map<string, sptr<Symbol>> symbols;
+    unordered_map<string, sptr<Symbol>> symbols{};
 
-    Scope(ScopeKind kind) : kind(kind), symbols{} {}
+    Scope(ScopeKind kind) : kind(kind) {}
 
     sptr<Symbol> get(const string &name) const {
       auto it = symbols.find(name);

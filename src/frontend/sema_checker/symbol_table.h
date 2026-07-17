@@ -1,34 +1,35 @@
 #pragma once
 
 #include "common/common.h"
+#include "scope.h"
 #include "symbol.h"
 #include <cassert>
 #include <vector>
 
 namespace cat {
 
-  class SymbolTable {
+class SymbolTable {
 public:
-    SymbolTable();
+  SymbolTable();
 
-    SymbolTable(const SymbolTable &) = delete;
-    SymbolTable &operator=(const SymbolTable &) = delete;
-    SymbolTable(SymbolTable &&) = default;
-    SymbolTable &operator=(SymbolTable &&) = default;
+  SymbolTable(const SymbolTable &) = delete;
+  SymbolTable &operator=(const SymbolTable &) = delete;
+  SymbolTable(SymbolTable &&) = delete;
+  SymbolTable &operator=(SymbolTable &&) = delete;
 
-    void enter_scope();
-    void exit_scope();
+  void enter_scope(ScopeKind kind);
+  void exit_scope();
 
-    Symbol *declare(Symbol sym);
+  Symbol *declare(Symbol sym);
 
-    Symbol *resolve(const string &name);
-    Symbol *resolve_global(const string &name) const;
+  Symbol *resolve(const string &name) const;
+  Symbol *resolve_global(const string &name) const;
 
-    size_t depth() const noexcept { return scopes.size(); }
+  bool nearest_of_kind(ScopeKind kind) const;
+  size_t depth() const noexcept { return scopes.size(); }
 
 private:
-    using Scope = unordered_map<string, Symbol>;
-    vector<Scope> scopes;
-  };
+  vector<Scope> scopes;
+};
 
-}// namespace cat
+} // namespace cat
