@@ -58,6 +58,7 @@ public:
     bool is_integer() const;
     bool is_bool() const;
     bool is_void() const;
+    bool is_error() const;
     string to_string() const;
 
     static Type prim(PrimType kind) { return Type(Prim{kind}); }

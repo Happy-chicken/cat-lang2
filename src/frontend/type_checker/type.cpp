@@ -88,6 +88,19 @@ namespace cat::semantics {
     );
   }
 
+  bool Type::is_error() const {
+    return std::visit(
+        [](const auto &v) -> bool {
+          using T = std::decay_t<decltype(v)>;
+          if constexpr (std::is_same_v<T, Error>) {
+            return true;
+          }
+          return false;
+        },
+        data
+    );
+  }
+
   string Type::to_string() const {
     return std::visit(
         [](const auto &v) -> string {
