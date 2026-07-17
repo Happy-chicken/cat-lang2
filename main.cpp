@@ -1,10 +1,11 @@
-#include "./src/common/diag.h"
-#include "./src/common/file.h"
-#include "./src/frontend/ast/printer.h"
-#include "./src/frontend/lexer/lexer.h"
-#include "./src/frontend/parser/parser.h"
-#include "./src/frontend/sema_checker/pass_manager.h"
-#include "./src/frontend/sema_checker/sema_checker.h"
+#include "diag.h"
+#include "file.h"
+#include "printer.h"
+#include "lexer.h"
+#include "parser.h"
+#include "pass_manager.h"
+#include "sema_checker.h"
+#include "flow_checker.h"
 #include "resolver.h"
 #include <iostream>
 
@@ -54,6 +55,7 @@ impl Printable for Point {
   cat::semantics::PassManager pm;
   pm.add_pass(std::make_unique<cat::Resolver>());
   pm.add_pass(std::make_unique<cat::SemaChecker>());
+  pm.add_pass(std::make_unique<cat::FlowChecker>());
   pm.run(program, diag_ctxt);
 
   if (diag_ctxt.has_errors()) {
