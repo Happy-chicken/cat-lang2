@@ -7,11 +7,12 @@
 #include "sema_checker.h"
 #include "flow_checker.h"
 #include "resolver.h"
+#include "type_checker.h"
 #include <iostream>
 
 int main() {
   std::string source = R"cat(
-let pi = -3.14;
+let pi:str = -3.14;
 
 def add(a: int, b: int) -> int {
   pi = 3.14;
@@ -56,6 +57,7 @@ impl Printable for Point {
   pm.add_pass(std::make_unique<cat::Resolver>());
   pm.add_pass(std::make_unique<cat::SemaChecker>());
   pm.add_pass(std::make_unique<cat::FlowChecker>());
+  pm.add_pass(std::make_unique<cat::semantics::TypeChecker>());
   pm.run(program, diag_ctxt);
 
   if (diag_ctxt.has_errors()) {

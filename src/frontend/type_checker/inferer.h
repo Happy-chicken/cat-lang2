@@ -12,6 +12,7 @@ namespace cat::semantics {
 
       Type infer_let_binding(const optional<Type>& declared_type, const optional<ExprNode> &init_expr, Span span, SemaCtxt &ctxt, error::DiagCtxt &diag);
 
+      static Type ast_type_to_semantic_type(const ast::Type &ast_type);
     private:
       Type infer_literal(const LiteralExpr &lit);
 

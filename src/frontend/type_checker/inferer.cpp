@@ -14,7 +14,7 @@ struct overloaded : Ts... {
 template <class... Ts>
 overloaded(Ts...) -> overloaded<Ts...>;
 
-static Type ast_type_to_semantic_type(const ast::Type &ast_type) {
+Type Inferer::ast_type_to_semantic_type(const ast::Type &ast_type) {
   return std::visit(
       overloaded{
           [](const ast::Type::Int &) -> Type {
