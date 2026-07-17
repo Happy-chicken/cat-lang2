@@ -88,7 +88,7 @@ namespace cat::semantics {
     );
   }
 
-  string Type::display_name() const {
+  string Type::to_string() const {
     return std::visit(
         [](const auto &v) -> string {
           using T = std::decay_t<decltype(v)>;
@@ -111,19 +111,19 @@ namespace cat::semantics {
           } else if constexpr (std::is_same_v<T, Var>) {
             return "?" + std::to_string(v.id);
           } else if constexpr (std::is_same_v<T, List>) {
-            return "list<" + (v.inner ? v.inner->display_name() : string("?")) +
+            return "list<" + (v.inner ? v.inner->to_string() : string("?")) +
                    ">";
           } else if constexpr (std::is_same_v<T, Ptr>) {
-            return "ptr<" + (v.inner ? v.inner->display_name() : string("?")) +
+            return "ptr<" + (v.inner ? v.inner->to_string() : string("?")) +
                    ">";
           } else if constexpr (std::is_same_v<T, Func>) {
             std::ostringstream oss;
             oss << "(";
             for (size_t i = 0; i < v.params.size(); ++i) {
               if (i > 0) oss << ", ";
-              oss << v.params[i].display_name();
+              oss << v.params[i].to_string();
             }
-            oss << ") -> " << (v.ret ? v.ret->display_name() : string("?"));
+            oss << ") -> " << (v.ret ? v.ret->to_string() : string("?"));
             return oss.str();
           } else if constexpr (std::is_same_v<T, Class>) {
             return v.name;

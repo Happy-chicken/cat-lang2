@@ -5,7 +5,7 @@
 #include <variant>
 
 namespace cat::semantics {
-
+  using TypedVar = uint32_t;
   enum class PrimType { Int,
                         Float,
                         Bool,
@@ -58,7 +58,7 @@ public:
     bool is_integer() const;
     bool is_bool() const;
     bool is_void() const;
-    string display_name() const;
+    string to_string() const;
 
     static Type prim(PrimType kind) { return Type(Prim{kind}); }
     static Type var(uint32_t id) { return Type(Var{id}); }

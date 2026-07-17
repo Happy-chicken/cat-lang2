@@ -8,7 +8,6 @@ namespace cat::semantics {
 
   class TypeCtxt {
 public:
-    using TypedVar = uint32_t;
     TypeCtxt() : next_var_id(0) {}
 
     TypeCtxt(const TypeCtxt &) = delete;
