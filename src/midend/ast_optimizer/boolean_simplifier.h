@@ -7,26 +7,23 @@ namespace cat::opt::ast {
 
 class BooleanSimplifier : public ASTPass<BooleanSimplifier> {
 public:
-  static constexpr const char *name = "BooleanSimplifier";
+  void on_function(FunctionDef &fn) { walk_block(fn.body); }
 
-  void before_unary(UnaryExpr &unary) { simplify(unary); }
-
-private:
-  void simplify(UnaryExpr &unary) {
+  void on_unary(Expr &parent, UnaryExpr &unary) {
     if (unary.op != UnaryOp::Not) return;
-    // !!x -> x
+
     if (auto *inner = std::get_if<UnaryExpr>(&unary.expr->expr)) {
       if (inner->op == UnaryOp::Not) {
-        set_expr(unary.expr, std::move(inner->expr->expr));
+        parent = std::move(inner->expr->expr);
         return;
       }
     }
-    // !true -> false, !false -> true
+
     bool val;
     if (is_literal(*unary.expr, val)) {
-      set_expr(unary.expr, cat::make_bool_literal(!val));
+      parent = make_bool_literal(!val);
     }
   }
 };
 
-} // namespace cat::midend
+}// namespace cat::opt::ast

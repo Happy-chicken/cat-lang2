@@ -7,15 +7,12 @@ namespace cat::opt::ast {
 
 class DeadBranch : public ASTPass<DeadBranch> {
 public:
-  static constexpr const char *name = "DeadBranch";
+  void on_function(FunctionDef &fn) { walk_block(fn.body); }
 
-  void before_if_stmt(IfStmt &ifs) { fold(ifs); }
-
-private:
-  void fold(IfStmt &ifs) {
+  void on_if_stmt(IfStmt &ifs) {
     if (is_truthy(ifs.condition)) {
-      // keep then branch, drop elif and else
-      keep_only(ifs, std::move(ifs.then_branch));
+      ifs.elif_branch.clear();
+      ifs.else_branch.reset();
       return;
     }
     if (is_falsy(ifs.condition)) {
@@ -31,12 +28,6 @@ private:
       ifs.else_branch.reset();
     }
   }
-
-  static void keep_only(IfStmt &ifs, uptr<Block> kept) {
-    ifs.elif_branch.clear();
-    ifs.else_branch.reset();
-    if (kept) ifs.then_branch = std::move(kept);
-  }
 };
 
-} // namespace cat::opt::ast
+}// namespace cat::opt::ast

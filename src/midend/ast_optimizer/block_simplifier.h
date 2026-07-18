@@ -1,21 +1,15 @@
 #pragma once
 
 #include "ast_pass.h"
+#include "stmt.h"
 
 namespace cat::opt::ast {
 
 class BlockSimplifier : public ASTPass<BlockSimplifier> {
 public:
-  static constexpr const char *name = "BlockSimplifier";
+  void on_function(FunctionDef &fn) { walk_block(fn.body); }
 
-  void after_block(Block &block) {
-    // merge adjacent block statements: BlockStmt (which contains a Block)
-    // into the parent's stmt list
-    merge_block_stmts(block);
-  }
-
-private:
-  void merge_block_stmts(Block &block) {
+  void on_block(Block &block) {
     std::vector<StmtNode> flattened;
     for (auto &s : block.stmts) {
       if (auto *bs = std::get_if<BlockStmt>(&s.stmt)) {
@@ -30,4 +24,4 @@ private:
   }
 };
 
-} // namespace cat::midend
+}// namespace cat::opt::ast

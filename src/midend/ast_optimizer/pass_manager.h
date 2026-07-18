@@ -39,4 +39,4 @@ private:
   vector<std::function<void(Program &)>> passes;
 };
 
-} // namespace cat::midend
+} // namespace cat::opt::ast
