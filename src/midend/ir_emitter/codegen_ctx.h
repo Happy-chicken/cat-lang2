@@ -16,7 +16,7 @@ namespace cat::ir {
   struct VarInfo {
     llvm::Value *ptr;
     llvm::Type *ty;
-    llvm::Type *pointee_ty = nullptr;
+    vector<llvm::Type *> deref_chain;
   };
 
   struct LoopInfo {

@@ -92,6 +92,17 @@ namespace cat::ir {
     return nullptr;
   }
 
+  vector<llvm::Type *> IrEmitter::ptr_deref_chain(const ast::Type &ast_type) {
+    vector<llvm::Type *> chain;
+    const ast::Type *cur = &ast_type;
+    while (auto *ptr = std::get_if<ast::Type::Ptr>(&cur->data)) {
+      cur = ptr->inner.get();
+      if (!cur) break;
+      chain.push_back(llvm_type(*cur));
+    }
+    return chain;
+  }
+
   llvm::Type *IrEmitter::infer_lit_type(const Expr &expr) {
     auto &c = *ctx->llvm_ctx;
     return std::visit(
@@ -256,7 +267,7 @@ namespace cat::ir {
         *ctx->module, var_ty, gv.ty.has_value(),
         llvm::GlobalValue::ExternalLinkage, cinit, gv.name
     );
-    env->declare_var(gv.name, gv_ptr, var_ty, gv.ty ? ptr_pointee_llvm_type(*gv.ty) : nullptr);
+    env->declare_var(gv.name, gv_ptr, var_ty, gv.ty ? ptr_deref_chain(*gv.ty) : vector<llvm::Type *>{});
   }
 
   // ── functions ──
@@ -291,7 +302,7 @@ namespace cat::ir {
       arg.setName(p.name);
       auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr, p.name);
       ctx->builder->CreateStore(&arg, a);
-      env->declare_var(p.name, a, arg.getType(), ptr_pointee_llvm_type(p.ty));
+      env->declare_var(p.name, a, arg.getType(), ptr_deref_chain(p.ty));
       ++i;
     }
 
@@ -326,7 +337,7 @@ namespace cat::ir {
                                       : i32(*ctx->llvm_ctx);
               auto *a = ctx->builder->CreateAlloca(vt, nullptr, s.name);
               if (iv) ctx->builder->CreateStore(iv, a);
-              env->declare_var(s.name, a, vt, s.ty ? ptr_pointee_llvm_type(*s.ty) : nullptr);
+              env->declare_var(s.name, a, vt, s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{});
             },
             [&](const IfStmt &s) { compile_if(s); },
             [&](const LoopStmt &s) { compile_while(s); },
@@ -533,18 +544,58 @@ namespace cat::ir {
                 [&](const IndexExpr &) -> llvm::Value * {
                   return compile_index_ptr(*u.expr);
                 },
+                [&](const UnaryExpr &inner) -> llvm::Value * {
+                  if (inner.op == UnaryOp::Deref || inner.op == UnaryOp::AddrOf) {
+                    auto *v = compile_expr(*u.expr);
+                    if (!v) return nullptr;
+                    auto *a = ctx->builder->CreateAlloca(v->getType(), nullptr, "tmp");
+                    ctx->builder->CreateStore(v, a);
+                    return a;
+                  }
+                  return nullptr;
+                },
                 [](const auto &) -> llvm::Value * { return nullptr; },
             },
             u.expr->expr
         );
       }
       case UnaryOp::Deref: {
+        // *&e  ->  e  (addr-of cancelled by deref)
+        // TODO:
+        if (auto *inner = std::get_if<UnaryExpr>(&u.expr->expr)) {
+          if (inner->op == UnaryOp::AddrOf)
+            return compile_expr(*inner->expr);
+        }
+
         auto *ptr_val = compile_expr(*u.expr);
         if (!ptr_val) return nullptr;
+
+        // walk deref chain to find root variable + depth
+        int depth = 1;
+        const ExprNode *cur = u.expr.get();
+        while (true) {
+          if (auto *inner = std::get_if<UnaryExpr>(&cur->expr)) {
+            if (inner->op == UnaryOp::Deref) {
+              ++depth;
+              cur = inner->expr.get();
+              continue;
+            }
+          }
+          break;
+        }
         llvm::Type *elem_ty = nullptr;
-        if (auto *var = std::get_if<Variable>(&u.expr->expr)) {
+        if (auto *var = std::get_if<Variable>(&cur->expr)) {
           auto vi = env->lookup_var(var->name);
-          elem_ty = vi.pointee_ty;
+          if (depth > 0 && depth <= static_cast<int>(vi.deref_chain.size()))
+            elem_ty = vi.deref_chain[depth - 1];
+        }
+        if (!elem_ty) {
+          // fallback: if we have a pointer value, try to deref based on deref_chain from any known var
+          if (auto *var = std::get_if<Variable>(&u.expr->expr)) {
+            auto vi = env->lookup_var(var->name);
+            if (!vi.deref_chain.empty())
+              elem_ty = vi.deref_chain[0];
+          }
         }
         if (!elem_ty) return nullptr;
         return ctx->builder->CreateLoad(elem_ty, ptr_val);

@@ -187,10 +187,14 @@ namespace cat {
       [&](const UnaryExpr& unary){
         check_expr(*unary.expr, unary.expr->span, ctx, diag);
         if (unary.op == UnaryOp::AddrOf) {
-          if (!(std::holds_alternative<Variable>(unary.expr->expr) || 
-                std::holds_alternative<MemberExpr>(unary.expr->expr) || 
-                std::holds_alternative<IndexExpr>(unary.expr->expr))) {
-            diag.error(span, "Address-of operator can only be applied to variables, member expressions, or index expressions")
+          auto &e = unary.expr->expr;
+          if (!(std::holds_alternative<Variable>(e) ||
+                std::holds_alternative<MemberExpr>(e) ||
+                std::holds_alternative<IndexExpr>(e) ||
+                (std::holds_alternative<UnaryExpr>(e) &&
+                 (std::get<UnaryExpr>(e).op == UnaryOp::Deref ||
+                  std::get<UnaryExpr>(e).op == UnaryOp::AddrOf)))) {
+            diag.error(span, "Address-of operator can only be applied to variables, member expressions, index expressions, dereferences, or address-of expressions")
                 .emit_to(diag);
           }
         }

@@ -69,6 +69,7 @@ public:
 private:
     llvm::Type *llvm_type(const ast::Type &ast_type);
     llvm::Type *ptr_pointee_llvm_type(const ast::Type &ast_type);
+    vector<llvm::Type *> ptr_deref_chain(const ast::Type &ast_type);
     llvm::Function *declare_runtime_func(const string &name, llvm::Type *ret_ty, vector<llvm::Type *> param_tys, bool is_var_arg = false);
 
 private:
