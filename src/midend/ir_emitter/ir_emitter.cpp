@@ -295,7 +295,7 @@ namespace cat::ir {
     );
 
     auto saved_fn = std::exchange(current_function, fn);
-    auto saved_env = std::exchange(env, std::make_shared<Env>(env));
+    EnvGuard guard(*this, std::make_shared<Env>(env));
 
     for (size_t i = 0; auto &arg: fn->args()) {
       auto &p = hdr.params[i];
@@ -314,7 +314,6 @@ namespace cat::ir {
         ctx->builder->CreateUnreachable();
     }
 
-    env = saved_env;
     current_function = saved_fn;
   }
 
