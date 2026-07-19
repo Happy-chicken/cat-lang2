@@ -1,0 +1,18 @@
+class Vec {
+  let x: int = 0;
+  let y: int = 0;
+}
+
+impl Vec {
+  def add_one(self:Vec) {
+    self.x = self.x + 1;
+    self.y = self.y + 1;
+  }
+}
+
+def main() ->int {
+  let a = Vec(1, 2);
+  a.add_one();
+  let b = Vec(3, 4);
+  return a.x + a.y + b.x + b.y;
+}

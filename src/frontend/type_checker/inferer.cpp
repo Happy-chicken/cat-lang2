@@ -321,9 +321,12 @@ Type Inferer::infer_call(const CallExpr &call, Span span, SemaCtxt &ctxt,
   Type resolved = ctxt.get_type_ctxt().resolve_type(callee_ty);
 
   if (auto *func = std::get_if<Type::Func>(&resolved.get_data())) {
-    if (func->params.size() != arg_types.size()) {
+    bool is_method = std::holds_alternative<MemberExpr>(call.callee->expr);
+    size_t param_offset = is_method ? 1 : 0;
+    size_t expected_params = func->params.size() - param_offset;
+    if (expected_params != arg_types.size()) {
       diag.error(span, "Argument count mismatch: expected " +
-                           std::to_string(func->params.size()) + ", got " +
+                           std::to_string(expected_params) + ", got " +
                            std::to_string(arg_types.size()))
           .emit_to(diag);
       return Type::error();
@@ -331,10 +334,10 @@ Type Inferer::infer_call(const CallExpr &call, Span span, SemaCtxt &ctxt,
 
     Unifier unifier(ctxt.get_type_ctxt());
     for (size_t i = 0; i < arg_types.size(); ++i) {
-      auto result = unifier.unify(arg_types[i], func->params[i]);
+      auto result = unifier.unify(arg_types[i], func->params[i + param_offset]);
       if (std::holds_alternative<error::UnifyError>(result)) {
         diag.error(span, "Argument " + std::to_string(i + 1) + " type mismatch")
-            .note("Expected: " + func->params[i].to_string())
+            .note("Expected: " + func->params[i + param_offset].to_string())
             .note("Found: " + arg_types[i].to_string())
             .emit_to(diag);
         return Type::error();
@@ -351,8 +354,12 @@ Type Inferer::infer_call(const CallExpr &call, Span span, SemaCtxt &ctxt,
     auto sym = ctxt.get_symbol_table().resolve_global(cls->name);
     if (sym) {
       if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
-        if (class_data->fields.size() != arg_types.size()) {
+        size_t required = 0;
+        for (bool has_def : class_data->has_default)
+          if (!has_def) ++required;
+        if (arg_types.size() < required || arg_types.size() > class_data->fields.size()) {
           diag.error(span, "Constructor argument count mismatch: expected " +
+                               std::to_string(required) + " to " +
                                std::to_string(class_data->fields.size()) +
                                ", got " + std::to_string(arg_types.size()))
               .emit_to(diag);

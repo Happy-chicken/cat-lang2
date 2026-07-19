@@ -1,0 +1,15 @@
+class Counter {
+  let val: int = 0;
+  let step: int = 1;
+}
+
+def make_counter(v: int, s: int) ->int {
+  let c = Counter(v, s);
+  return c.val + c.step;
+}
+
+def main() ->int {
+  let c1 = Counter();
+  let c2 = Counter(10, 2);
+  return c1.val + c1.step + c2.val + c2.step;
+}

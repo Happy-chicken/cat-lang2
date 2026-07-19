@@ -1,0 +1,11 @@
+class Node {
+  let val: int = 0;
+  let next: int = 0;
+}
+
+def main() ->int {
+  let n = Node(42, 7);
+  let sum = n.val + n.next;
+  n.val = 100;
+  return sum + n.val;
+}

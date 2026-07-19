@@ -10,6 +10,7 @@ namespace cat {
   struct VariableData {
     bool is_mutable;
     bool is_initialized;
+    optional<size_t> known_list_len;
   };
 
   struct FunctionData {
@@ -25,6 +26,7 @@ namespace cat {
 
   struct ClassData {
     vector<std::pair<string, ast::Type>> fields;
+    vector<bool> has_default;
   };
 
   struct TraitData {
@@ -43,7 +45,7 @@ public:
     Symbol(Symbol &&) = default;
     Symbol &operator=(Symbol &&) = default;
 
-    static Symbol new_variable(string name, optional<ast::Type> ty, bool is_mutable, Span span);
+    static Symbol new_variable(string name, optional<ast::Type> ty, bool is_mutable, Span span, optional<size_t> list_len = std::nullopt);
 
     static Symbol new_function(string name, vector<ast::Type> params, ast::Type return_type, Span span);
 
@@ -51,7 +53,7 @@ public:
 
     static Symbol new_type(string name, Span span);
 
-    static Symbol new_class(string name, vector<std::pair<string, ast::Type>> fields, Span span);
+    static Symbol new_class(string name, vector<std::pair<string, ast::Type>> fields, vector<bool> has_default, Span span);
 
     static Symbol new_trait(string name, vector<string> methods, Span span);
 

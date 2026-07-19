@@ -6,8 +6,8 @@ namespace cat {
       : kind(std::move(kind)), name(std::move(name)), type(std::move(ty)),
         scope_depth(scope_depth), span_(span) {}
 
-  Symbol Symbol::new_variable(string name, optional<ast::Type> ty, bool is_mutable, Span span) {
-    VariableData data{is_mutable, false};
+  Symbol Symbol::new_variable(string name, optional<ast::Type> ty, bool is_mutable, Span span, optional<size_t> list_len) {
+    VariableData data{is_mutable, false, std::move(list_len)};
     SymbolKind kind = std::move(data);
     return Symbol(std::move(kind), std::move(name), std::move(ty), 0, span);
   }
@@ -29,8 +29,8 @@ namespace cat {
     return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
   }
 
-  Symbol Symbol::new_class(string name, vector<std::pair<string, ast::Type>> fields, Span span) {
-    ClassData data{std::move(fields)};
+  Symbol Symbol::new_class(string name, vector<std::pair<string, ast::Type>> fields, vector<bool> has_default, Span span) {
+    ClassData data{std::move(fields), std::move(has_default)};
     SymbolKind kind = std::move(data);
     return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
   }

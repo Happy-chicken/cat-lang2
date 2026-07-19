@@ -25,6 +25,8 @@ public:
       return ok;
     }
 
+    semantics::SemaCtxt &get_sema_ctxt() { return ctx; }
+
 private:
     vector<uptr<semantics::Pass>> passes;
     semantics::SemaCtxt ctx;

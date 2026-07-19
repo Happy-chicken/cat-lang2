@@ -1,0 +1,21 @@
+def test_bool(x: int) -> bool {
+  let result = x > 0 and x < 10;
+  if result {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+def main() ->int {
+  let a = test_bool(5);
+  let b = test_bool(20);
+  if a {
+    if b {
+      return 100;
+    } else {
+      return 1;
+    }
+  }
+  return 0;
+}

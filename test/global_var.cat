@@ -1,0 +1,5 @@
+let global_ten: int = 10;
+
+def main() ->int {
+  return global_ten;
+}

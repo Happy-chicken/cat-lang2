@@ -1,0 +1,13 @@
+def sum_to(n: int) ->int {
+  let total:int = 0;
+  let i:int = 0;
+  while i < n {
+    i = i + 1;
+    total = total + i;
+  }
+  return total;
+}
+
+def main() ->int {
+  return sum_to(10);
+}

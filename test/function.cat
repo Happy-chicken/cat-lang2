@@ -1,0 +1,11 @@
+let pi:int = 1000;
+
+def add(x: int, y: int) -> int {
+  return x + y;
+}
+
+def main() ->int {
+  let a = add(1, 2);
+  let b = add(a, 4);
+  return b;
+}

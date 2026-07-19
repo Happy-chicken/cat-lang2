@@ -77,7 +77,29 @@ namespace cat {
               if (var_def.init.has_value()) {
                 check_expr(*var_def.init, var_def.init->span, ctx, diag);
               }
-              auto sym = Symbol::new_variable(var_def.name, var_def.ty ? var_def.ty->clone() : ast::Type{}, false, span);
+              optional<size_t> list_len;
+              optional<ast::Type> var_ty;
+              if (var_def.ty.has_value()) {
+                var_ty = var_def.ty->clone();
+              }
+              if (var_def.init.has_value()) {
+                if (auto *list = std::get_if<ListExpr>(&var_def.init->expr)) {
+                  list_len = list->elements.size();
+                }
+                if (!var_ty.has_value()) {
+                  if (auto *call = std::get_if<CallExpr>(&var_def.init->expr)) {
+                    if (auto *cv = std::get_if<Variable>(&call->callee->expr)) {
+                      auto class_sym = ctx.get_symbol_table().resolve(cv->name);
+                      if (class_sym && std::holds_alternative<ClassData>(class_sym->get_kind())) {
+                        var_ty = ast::Type(ast::Type::Class{cv->name});
+                      }
+                    }
+                  }
+                }
+              }
+              auto sym = Symbol::new_variable(var_def.name,
+                                              var_ty ? std::move(*var_ty) : ast::Type{},
+                                              false, span, list_len);
               auto existing = ctx.get_symbol_table().declare(std::move(sym));
               if (existing) {
                 diag.error(span, "Variable '" + var_def.name + "' is already declared in this scope")
@@ -181,26 +203,39 @@ namespace cat {
             [&](const auto&) -> string { return ""; }
         }, call.callee->expr);
         if (!func_name.empty()) {
-          auto sym = ctx.get_symbol_table().resolve(func_name);
+          string resolved_name = func_name;
+          bool is_method = std::holds_alternative<MemberExpr>(call.callee->expr);
+          if (is_method) {
+            auto &member = std::get<MemberExpr>(call.callee->expr);
+            if (auto *var = std::get_if<Variable>(&member.object->expr)) {
+              auto obj_sym = ctx.get_symbol_table().resolve(var->name);
+              if (obj_sym && obj_sym->get_type().has_value()) {
+                auto &ty = *obj_sym->get_type();
+                if (auto *cls = std::get_if<ast::Type::Class>(&ty.data)) {
+                  resolved_name = cls->name + "_" + func_name;
+                }
+              }
+            }
+          }
+          auto sym = ctx.get_symbol_table().resolve(resolved_name);
           if (!sym) {
             diag.error(span, "Function '" + func_name + "' is not declared")
                 .emit_to(diag);
           } else if (!sym->is_callable()) {
             diag.error(span, "'" + func_name + "' is not callable")
                 .emit_to(diag);
-          }
-          std::visit(overloaded{
+          } else {
+            std::visit(overloaded{
               [&](const FunctionData& func_data) {
-                bool is_method = std::holds_alternative<MemberExpr>(call.callee->expr);
                 int expected_args = func_data.params.size();
                 if (is_method) {
-                  expected_args = std::min(expected_args - 1, 0); // delete self for method calls
+                  expected_args = std::max(static_cast<int>(expected_args) - 1, 0);
                 }
-                if (expected_args != call.args.size()) {
+                if (expected_args != static_cast<int>(call.args.size())) {
                   diag.error(span, "Function '" 
                                         + func_name 
                                         + "' expects " 
-                                        + std::to_string(func_data.params.size()) 
+                                        + std::to_string(expected_args) 
                                         + " arguments, but " 
                                         + std::to_string(call.args.size()) 
                                         + " were provided")
@@ -208,11 +243,16 @@ namespace cat {
                 }
               },
               [&](const ClassData& class_data) {
-                if (class_data.fields.size() != call.args.size()) {
+                size_t required = 0;
+                for (bool has_def : class_data.has_default)
+                  if (!has_def) ++required;
+                if (call.args.size() < required || call.args.size() > class_data.fields.size()) {
                   diag.error(span, "Class '" 
                                         + func_name 
                                         + "' expects " 
-                                        + std::to_string(class_data.fields.size()) 
+                                        + std::to_string(required)
+                                        + " to " 
+                                        + std::to_string(class_data.fields.size())
                                         + " arguments, but " 
                                         + std::to_string(call.args.size()) 
                                         + " were provided")
@@ -220,7 +260,8 @@ namespace cat {
                 }
               },
               [&](const auto&) {}
-          }, sym->get_kind());
+            }, sym->get_kind());
+          }
         }
         for (const auto &arg : call.args) {
           check_expr(*arg, arg->span, ctx, diag);
@@ -232,6 +273,51 @@ namespace cat {
       [&](const IndexExpr& index){
         check_expr(*index.object, index.object->span, ctx, diag);
         check_expr(*index.index, index.index->span, ctx, diag);
+
+        auto get_const_index = [](const Expr &e) -> optional<int64_t> {
+          if (auto *lit = std::get_if<LiteralExpr>(&e)) {
+            if (auto *v = std::get_if<int64_t>(&lit->lit)) return *v;
+          }
+          if (auto *unary = std::get_if<UnaryExpr>(&e)) {
+            if (unary->op == UnaryOp::Neg) {
+              if (auto *lit = std::get_if<LiteralExpr>(&unary->expr->expr)) {
+                if (auto *v = std::get_if<int64_t>(&lit->lit)) return -*v;
+              }
+            }
+          }
+          return std::nullopt;
+        };
+
+        auto idx_val = get_const_index(index.index->expr);
+        if (idx_val.has_value() && *idx_val < 0) {
+          diag.error(index.index->span,
+                     "Index out of bounds: negative index " + std::to_string(*idx_val))
+              .emit_to(diag);
+        }
+
+        if (auto *list = std::get_if<ListExpr>(&index.object->expr)) {
+          if (idx_val.has_value() && *idx_val >= 0 &&
+              static_cast<size_t>(*idx_val) >= list->elements.size()) {
+            diag.error(index.index->span,
+                       "Index out of bounds: index " + std::to_string(*idx_val) +
+                           " exceeds list length " + std::to_string(list->elements.size()))
+                .emit_to(diag);
+          }
+        }
+
+        if (auto *var = std::get_if<Variable>(&index.object->expr)) {
+          if (auto *sym = ctx.get_symbol_table().resolve(var->name)) {
+            if (auto *vd = std::get_if<VariableData>(&sym->get_kind())) {
+              if (vd->known_list_len.has_value() && idx_val.has_value() &&
+                  *idx_val >= 0 && static_cast<size_t>(*idx_val) >= *vd->known_list_len) {
+                diag.error(index.index->span,
+                           "Index out of bounds: index " + std::to_string(*idx_val) +
+                               " exceeds list length " + std::to_string(*vd->known_list_len))
+                    .emit_to(diag);
+              }
+            }
+          }
+        }
       },
       [&](const ListExpr& list){
         for (const auto &element : list.elements) {

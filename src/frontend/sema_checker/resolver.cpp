@@ -75,14 +75,17 @@ namespace cat {
                                   .emit_to(diag);
                             }
 
-                            vector<std::pair<string, ast::Type>> fields_sym;
-                            fields_sym.reserve(cls.fields.size());
-                            for (const auto &f: cls.fields) {
-                              auto ty = f.ty.clone();
-                              fields_sym.emplace_back(f.name, std::move(ty));
-                            }
+      vector<std::pair<string, ast::Type>> fields_sym;
+      vector<bool> has_default;
+      fields_sym.reserve(cls.fields.size());
+      has_default.reserve(cls.fields.size());
+      for (const auto &f: cls.fields) {
+        auto ty = f.ty.clone();
+        fields_sym.emplace_back(f.name, std::move(ty));
+        has_default.push_back(f.init.has_value());
+      }
 
-                            Symbol sym = Symbol::new_class(cls.name, std::move(fields_sym), item_node.span);
+      Symbol sym = Symbol::new_class(cls.name, std::move(fields_sym), std::move(has_default), item_node.span);
                             declare_top_level(std::move(sym), ctx, diag);
                           },
                           [](const auto &) {}},
