@@ -4,8 +4,13 @@ def add(x: int, y: int) -> int {
   return x + y;
 }
 
+def add_one(x:ptr<int>) {
+  *x = *x + 1;
+}
+
 def main() ->int {
+  let x = 1;
+  add_one(&x);
   let a = add(1, 2);
-  let b = add(a, 4);
-  return b;
+  return x + a;
 }

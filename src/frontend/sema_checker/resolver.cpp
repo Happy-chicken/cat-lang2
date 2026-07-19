@@ -163,11 +163,16 @@ namespace cat {
     for (const auto &method: impl.methods) {
       const auto &header = method.function_header;
 
-      // 检查第一个参数是否为 self
-      if (!header.params.empty()) {
+      if (header.params.empty()) {
+        diag.error(span, "Method '" + header.name + "' must have 'self' as its first parameter")
+            .emit_to(diag);
+      } else {
         const auto &first = header.params[0];
-        if (first.name == "self") {
-          ast::Type expected = ast::type_class(impl.class_name);// 期望的类型
+        if (first.name != "self") {
+          diag.error(span, "Method '" + header.name + "' must have 'self' as its first parameter, found '" + first.name + "'")
+              .emit_to(diag);
+        } else {
+          ast::Type expected = ast::type_class(impl.class_name);
 
           if (first.ty != expected) {
             diag.error(span, "expected `self: " + impl.class_name + "`, found `self: " + first.ty.to_string() + "`")
@@ -180,7 +185,7 @@ namespace cat {
       std::vector<ast::Type> param_types;
       param_types.reserve(header.params.size());
       for (const auto &p: header.params) {
-        param_types.push_back(p.ty.clone());// 深拷贝
+        param_types.push_back(p.ty.clone());
       }
 
       // 返回类型

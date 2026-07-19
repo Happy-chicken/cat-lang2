@@ -31,10 +31,10 @@ namespace cat::ir {
     string list_type_key(llvm::Type *et) {
       if (et->isIntegerTy(32)) return "list.i32";
       if (et->isIntegerTy(64)) return "list.i64";
-      if (et->isIntegerTy(8))  return "list.i8";
-      if (et->isIntegerTy(1))  return "list.bool";
-      if (et->isFloatTy())     return "list.float";
-      if (et->isPointerTy())   return "list.ptr";
+      if (et->isIntegerTy(8)) return "list.i8";
+      if (et->isIntegerTy(1)) return "list.bool";
+      if (et->isFloatTy()) return "list.float";
+      if (et->isPointerTy()) return "list.ptr";
       if (auto *st = llvm::dyn_cast<llvm::StructType>(et))
         return "list." + st->getName().str();
       return "list.unknown";
@@ -84,6 +84,12 @@ namespace cat::ir {
 
   llvm::Type *IrEmitter::ast_type_to_llvm_type(const ast::Type &ast_type) {
     return llvm_type(ast_type);
+  }
+
+  llvm::Type *IrEmitter::ptr_pointee_llvm_type(const ast::Type &ast_type) {
+    if (auto *ptr = std::get_if<ast::Type::Ptr>(&ast_type.data))
+      return ptr->inner ? llvm_type(*ptr->inner) : nullptr;
+    return nullptr;
   }
 
   llvm::Type *IrEmitter::infer_lit_type(const Expr &expr) {
@@ -248,8 +254,9 @@ namespace cat::ir {
 
     auto *gv_ptr = new llvm::GlobalVariable(
         *ctx->module, var_ty, gv.ty.has_value(),
-        llvm::GlobalValue::ExternalLinkage, cinit, gv.name);
-    env->declare_var(gv.name, gv_ptr, var_ty);
+        llvm::GlobalValue::ExternalLinkage, cinit, gv.name
+    );
+    env->declare_var(gv.name, gv_ptr, var_ty, gv.ty ? ptr_pointee_llvm_type(*gv.ty) : nullptr);
   }
 
   // ── functions ──
@@ -284,7 +291,7 @@ namespace cat::ir {
       arg.setName(p.name);
       auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr, p.name);
       ctx->builder->CreateStore(&arg, a);
-      env->declare_var(p.name, a, arg.getType());
+      env->declare_var(p.name, a, arg.getType(), ptr_pointee_llvm_type(p.ty));
       ++i;
     }
 
@@ -319,7 +326,7 @@ namespace cat::ir {
                                       : i32(*ctx->llvm_ctx);
               auto *a = ctx->builder->CreateAlloca(vt, nullptr, s.name);
               if (iv) ctx->builder->CreateStore(iv, a);
-              env->declare_var(s.name, a, vt);
+              env->declare_var(s.name, a, vt, s.ty ? ptr_pointee_llvm_type(*s.ty) : nullptr);
             },
             [&](const IfStmt &s) { compile_if(s); },
             [&](const LoopStmt &s) { compile_while(s); },
@@ -512,15 +519,48 @@ namespace cat::ir {
   }
 
   llvm::Value *IrEmitter::compile_unary(const UnaryExpr &u) {
-    auto *v = compile_expr(*u.expr);
-    if (!v) return nullptr;
     switch (u.op) {
-      case UnaryOp::Neg:
+      case UnaryOp::AddrOf: {
+        return std::visit(
+            overload{
+                [&](const Variable &var) -> llvm::Value * {
+                  auto vi = env->lookup_var(var.name);
+                  return vi.ptr;
+                },
+                [&](const MemberExpr &) -> llvm::Value * {
+                  return compile_member_ptr(*u.expr);
+                },
+                [&](const IndexExpr &) -> llvm::Value * {
+                  return compile_index_ptr(*u.expr);
+                },
+                [](const auto &) -> llvm::Value * { return nullptr; },
+            },
+            u.expr->expr
+        );
+      }
+      case UnaryOp::Deref: {
+        auto *ptr_val = compile_expr(*u.expr);
+        if (!ptr_val) return nullptr;
+        llvm::Type *elem_ty = nullptr;
+        if (auto *var = std::get_if<Variable>(&u.expr->expr)) {
+          auto vi = env->lookup_var(var->name);
+          elem_ty = vi.pointee_ty;
+        }
+        if (!elem_ty) return nullptr;
+        return ctx->builder->CreateLoad(elem_ty, ptr_val);
+      }
+      case UnaryOp::Neg: {
+        auto *v = compile_expr(*u.expr);
+        if (!v) return nullptr;
         return v->getType()->isFloatTy()
                    ? ctx->builder->CreateFNeg(v)
                    : ctx->builder->CreateSub(llvm::ConstantInt::get(v->getType(), 0), v);
-      case UnaryOp::Not:
+      }
+      case UnaryOp::Not: {
+        auto *v = compile_expr(*u.expr);
+        if (!v) return nullptr;
         return ctx->builder->CreateIsNull(v);
+      }
       default:
         return nullptr;
     }
@@ -610,6 +650,12 @@ namespace cat::ir {
               if (auto *p = compile_index_ptr(*a.target))
                 ctx->builder->CreateStore(val, p);
             },
+            [&](const UnaryExpr &u) {
+              if (u.op == UnaryOp::Deref) {
+                auto *ptr = compile_expr(*u.expr);
+                if (ptr) ctx->builder->CreateStore(val, ptr);
+              }
+            },
             [](const auto &) {},
         },
         a.target->expr
@@ -618,11 +664,10 @@ namespace cat::ir {
   }
 
   // ── member / index access ──
-  llvm::Value *IrEmitter::compile_member_access(const ExprNode &obj,
-                                                  const string &field) {
+  llvm::Value *IrEmitter::compile_member_access(const ExprNode &obj, const string &field) {
     auto *obj_val = compile_expr(obj);
     if (!obj_val) return nullptr;
-    for (auto &kv : ctx->class_registry) {
+    for (auto &kv: ctx->class_registry) {
       auto it = kv.second->field_indices.find(field);
       if (it == kv.second->field_indices.end()) continue;
       auto *st = kv.second->struct_ty;
@@ -765,7 +810,8 @@ namespace cat::ir {
 
     auto *malloc_fn = declare_runtime_func("malloc", ptr_ty(c), {i64(c)});
     auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
-        llvm::ConstantExpr::getSizeOf(et), i64(c));
+        llvm::ConstantExpr::getSizeOf(et), i64(c)
+    );
     auto *total = ctx->builder->CreateMul(nv, elem_sz);
     auto *data = ctx->builder->CreateCall(malloc_fn, {total}, "listdata");
     ctx->builder->CreateStore(data, df);

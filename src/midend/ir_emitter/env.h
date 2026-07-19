@@ -11,8 +11,8 @@ namespace cat::ir {
     Env() = default;
     explicit Env(sptr<Env> p) : parent(std::move(p)) {}
 
-    void declare_var(const string &name, llvm::Value *ptr, llvm::Type *ty) {
-      locals[name] = VarInfo{ptr, ty};
+    void declare_var(const string &name, llvm::Value *ptr, llvm::Type *ty, llvm::Type *pointee_ty = nullptr) {
+      locals[name] = VarInfo{ptr, ty, pointee_ty};
     }
 
     VarInfo lookup_var(const string &name) const {
