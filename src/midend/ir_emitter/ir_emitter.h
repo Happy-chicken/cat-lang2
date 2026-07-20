@@ -20,6 +20,7 @@ public:
       uptr<llvm::Module> mod;
     };
     ModuleHandle release_module();
+    const llvm::Module &get_module() const { return *ctx->module; }
 
     void dump_module(std::ostream &os);
     llvm::Type *infer_lit_type(const Expr &expr);

@@ -1,0 +1,112 @@
+#include "analysis_ctx.h"
+#include <llvm-20/llvm/IR/CFG.h>
+#include <llvm-20/llvm/IR/InstrTypes.h>
+#include <llvm-20/llvm/IR/Instructions.h>
+
+namespace cat::opt::ana {
+
+  AnalysisCtxt::AnalysisCtxt(const llvm::Module &module) {
+    for (const auto &func : module) {
+      auto name = func.getName().str();
+      if (name.starts_with("llvm.")) continue;
+      cfgs[name] = build_cfg(func);
+    }
+  }
+
+  static bool is_valid_var(const llvm::Value *v) {
+    if (!v->hasName()) return false;
+    auto name = v->getName();
+    if (name.empty() || name.contains('.') || name.contains("tmp") ||
+        name.starts_with("list") || name.starts_with("bounds."))
+      return false;
+    return true;
+  }
+
+  CFG AnalysisCtxt::build_cfg(const llvm::Function &func) {
+    CFG cfg;
+    unordered_map<const llvm::BasicBlock *, uint32_t> bb2id;
+
+    for (const auto &bb : func) {
+      bb2id[&bb] = static_cast<uint32_t>(cfg.blocks.size());
+      BlockInfo bi;
+      bi.id = static_cast<uint32_t>(cfg.blocks.size());
+      extract_block_def_use(bb, bb2id, bi.def, bi.use);
+      cfg.blocks.push_back(std::move(bi));
+    }
+
+    for (const auto &bb : func) {
+      auto id = bb2id[&bb];
+      cfg.blocks[id].succ = get_successor_indices(bb, bb2id);
+    }
+
+    BlockInfo exit_block;
+    exit_block.id = static_cast<uint32_t>(cfg.blocks.size());
+    cfg.exit = exit_block.id;
+    cfg.blocks.push_back(std::move(exit_block));
+
+    for (auto &b : cfg.blocks) {
+      if (b.succ.empty() && b.id != cfg.exit)
+        b.succ.push_back(cfg.exit);
+    }
+
+    return cfg;
+  }
+
+  void AnalysisCtxt::extract_block_def_use(
+      const llvm::BasicBlock &bb,
+      unordered_map<const llvm::BasicBlock *, uint32_t> & /*bb2id*/,
+      ValueSet &def, ValueSet &use
+  ) {
+    for (const auto &inst : bb) {
+      if (llvm::isa<llvm::AllocaInst>(&inst)) {
+        if (is_valid_var(&inst))
+          def.insert(&inst);
+        continue;
+      }
+
+      if (auto *store = llvm::dyn_cast<llvm::StoreInst>(&inst)) {
+        auto *ptr = store->getPointerOperand();
+        if (is_valid_var(ptr))
+          def.insert(ptr);
+        for (auto &op : inst.operands()) {
+          auto *v = op.get();
+          if (v != ptr && is_valid_var(v))
+            use.insert(v);
+        }
+        continue;
+      }
+
+      if (llvm::isa<llvm::CallInst>(&inst) || llvm::isa<llvm::InvokeInst>(&inst)) {
+        for (auto &op : inst.operands()) {
+          auto *v = op.get();
+          if (is_valid_var(v))
+            use.insert(v);
+        }
+        continue;
+      }
+
+      for (auto &op : inst.operands()) {
+        auto *v = op.get();
+        if (is_valid_var(v))
+          use.insert(v);
+      }
+    }
+  }
+
+  vector<uint32_t> AnalysisCtxt::get_successor_indices(
+      const llvm::BasicBlock &bb,
+      const unordered_map<const llvm::BasicBlock *, uint32_t> &bb2id
+  ) {
+    vector<uint32_t> succs;
+    auto *term = bb.getTerminator();
+    if (!term) return succs;
+    for (unsigned i = 0; i < term->getNumSuccessors(); ++i) {
+      auto *succ_bb = term->getSuccessor(i);
+      auto it = bb2id.find(succ_bb);
+      if (it != bb2id.end())
+        succs.push_back(it->second);
+    }
+    return succs;
+  }
+
+} // namespace cat::opt::ana
