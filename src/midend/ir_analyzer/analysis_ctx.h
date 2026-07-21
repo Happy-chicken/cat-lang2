@@ -18,6 +18,7 @@ namespace cat::opt::ana {
   };
 
   using ValueSet = std::unordered_set<const llvm::Value *, ConstValuePtrHash>;
+  using ExprSet = std::set<std::string>;
 
   struct BlockInfo {
     uint32_t id;
@@ -41,6 +42,13 @@ namespace cat::opt::ana {
     }
   };
 
+  struct FunctionAnalysisData {
+    std::set<string> alloca_names;
+    unordered_map<string, string> load2alloca;
+    vector<ExprSet> block_expressions;
+    vector<ExprSet> all_expressions;
+  };
+
   class AnalysisCtxt {
 public:
     explicit AnalysisCtxt(const llvm::Module &module);
@@ -53,6 +61,7 @@ private:
     vector<uint32_t> get_successor_indices(const llvm::BasicBlock &bb, const unordered_map<const llvm::BasicBlock *, uint32_t> &bb2id);
 
     unordered_map<string, CFG> cfgs;
+    unordered_map<string, FunctionAnalysisData*> func_data;
   };
 
 }// namespace cat::opt::ana
