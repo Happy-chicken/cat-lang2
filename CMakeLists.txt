@@ -48,6 +48,9 @@ if(IS_MACOS)
     find_package(LLVM REQUIRED CONFIG)
     message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 
+    find_package(MLIR REQUIRED CONFIG)
+    message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
+
 elseif(IS_LINUX)
     # Ubuntu/Linux: 直接指定版本查找
     find_package(LLVM 20.1.8 REQUIRED CONFIG)
@@ -55,6 +58,7 @@ elseif(IS_LINUX)
 endif()
 
 include_directories(${LLVM_INCLUDE_DIRS})
+include_directories(${MLIR_INCLUDE_DIRS})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/common)
@@ -68,6 +72,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ast_optimizer)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_emitter)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/mlir_emitter)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer/passes)
 
@@ -83,6 +88,7 @@ file(GLOB_RECURSE SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ast_optimizer/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_emitter/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/mlir_emitter/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer/passes/*.cpp"
 )
@@ -104,7 +110,17 @@ llvm_map_components_to_libnames(LLVM_LIBS
     native
 )
 list(REMOVE_DUPLICATES LLVM_LIBS)
-target_link_libraries(catlang PRIVATE ${LLVM_LIBS})
+target_link_libraries(catlang PRIVATE ${LLVM_LIBS}
+    MLIRIR
+    MLIRParser
+    MLIRPass
+    MLIRSupport
+    MLIRExecutionEngine
+    MLIRArithDialect
+    MLIRControlFlowDialect
+    MLIRFuncDialect
+    MLIRMemRefDialect
+)
 
 if(IS_MACOS)
     target_compile_options(catlang PRIVATE -g -O0 -fstandalone-debug)

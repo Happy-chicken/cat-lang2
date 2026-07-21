@@ -14,6 +14,7 @@
 #include "jit.h"
 #include "lexer.h"
 #include "live_variable.h"
+#include "mlir_emitter.h"
 #include "very_busy_expression.h"
 #include "reaching_definition.h"
 #include "parser.h"
@@ -88,10 +89,19 @@ static int run_file(const std::string &path) {
 
 static void run() {
   std::string source = R"(
+    def add(a:int, b:int) -> int {
+      return a + b;
+    }
     def main()->int {
       let a = 1;
       let b = 2;
-      return a;
+      if a < b {
+        let c = add(a, b);
+        return c;
+      } else {
+        return 0;
+      }
+      // return add(a, b);
     }
   )";
 
@@ -126,6 +136,10 @@ static void run() {
   cat::ir::IrEmitter emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
   emitter.compile(program);
 
+  cat::mmlir::MlirEmitter mlir_emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
+  mlir_emitter.compile(program);
+  mlir_emitter.dump_module(std::cout);
+
   cat::opt::ana::AnalysisCtxt analysis_ctx(emitter.get_module());
   const auto &cfgs = analysis_ctx.get_cfgs();
   for (const auto &[fn_name, cfg]: cfgs) {
@@ -144,7 +158,7 @@ static void run() {
     }
     auto very_busy = cat::opt::ana::compute_very_busy_expressions(cfg, *analysis_ctx.get_func_data().at(fn_name));
 
-    auto reaching_defs = cat::opt::ana::compute_reaching_definitions(cfg, *analysis_ctx.get_func_data().at(fn_name));
+    // auto reaching_defs = cat::opt::ana::compute_reaching_definitions(cfg, *analysis_ctx.get_func_data().at(fn_name));
   }
 
   cat::jit::JIT jit(diag_ctxt);
