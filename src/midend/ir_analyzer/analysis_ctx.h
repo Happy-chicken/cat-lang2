@@ -18,7 +18,6 @@ namespace cat::opt::ana {
   };
 
   using ValueSet = std::unordered_set<const llvm::Value *, ConstValuePtrHash>;
-  using ExprSet = std::set<std::string>;
 
   struct BlockInfo {
     uint32_t id;
@@ -43,10 +42,12 @@ namespace cat::opt::ana {
   };
 
   struct FunctionAnalysisData {
-    std::set<string> alloca_names;
-    unordered_map<string, string> load2alloca;
-    vector<ExprSet> block_expressions;
-    vector<ExprSet> all_expressions;
+    ValueSet alloca_names;
+    unordered_map<const llvm::Value *, const llvm::Value *, ConstValuePtrHash> load2alloca;
+    unordered_map<const llvm::Value *, const llvm::Value *, ConstValuePtrHash> def2alloca;
+    vector<ValueSet> block_expressions;
+    ValueSet all_expressions;
+    vector<ValueSet> block_defs;
   };
 
   class AnalysisCtxt {
@@ -54,14 +55,15 @@ public:
     explicit AnalysisCtxt(const llvm::Module &module);
 
     const unordered_map<string, CFG> &get_cfgs() const { return cfgs; }
+    const unordered_map<string, uptr<FunctionAnalysisData>> &get_func_data() const { return func_data; }
 
 private:
-    CFG build_cfg(const llvm::Function &func);
+    CFG build_cfg(const llvm::Function &func, FunctionAnalysisData &fdata);
     void extract_block_def_use(const llvm::BasicBlock &bb, unordered_map<const llvm::BasicBlock *, uint32_t> &bb2id, ValueSet &def, ValueSet &use);
     vector<uint32_t> get_successor_indices(const llvm::BasicBlock &bb, const unordered_map<const llvm::BasicBlock *, uint32_t> &bb2id);
 
     unordered_map<string, CFG> cfgs;
-    unordered_map<string, FunctionAnalysisData*> func_data;
+    unordered_map<string, uptr<FunctionAnalysisData>> func_data;
   };
 
 }// namespace cat::opt::ana

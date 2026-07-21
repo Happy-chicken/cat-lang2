@@ -14,6 +14,8 @@
 #include "jit.h"
 #include "lexer.h"
 #include "live_variable.h"
+#include "very_busy_expression.h"
+#include "reaching_definition.h"
 #include "parser.h"
 #include "printer.h"
 #include "resolver.h"
@@ -140,6 +142,9 @@ static void run() {
           std::cout << "  unused `" << v->getName().str() << "` in " << fn_name << "\n";
       }
     }
+    auto very_busy = cat::opt::ana::compute_very_busy_expressions(cfg, *analysis_ctx.get_func_data().at(fn_name));
+
+    auto reaching_defs = cat::opt::ana::compute_reaching_definitions(cfg, *analysis_ctx.get_func_data().at(fn_name));
   }
 
   cat::jit::JIT jit(diag_ctxt);

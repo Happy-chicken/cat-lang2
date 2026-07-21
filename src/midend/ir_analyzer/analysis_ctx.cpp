@@ -9,7 +9,9 @@ namespace cat::opt::ana {
     for (const auto &func : module) {
       auto name = func.getName().str();
       if (name.starts_with("llvm.")) continue;
-      cfgs[name] = build_cfg(func);
+      auto fdata = std::make_unique<FunctionAnalysisData>();
+      cfgs[name] = build_cfg(func, *fdata);
+      func_data[name] = std::move(fdata);
     }
   }
 
@@ -22,7 +24,32 @@ namespace cat::opt::ana {
     return true;
   }
 
-  CFG AnalysisCtxt::build_cfg(const llvm::Function &func) {
+  static const llvm::Value *trace_to_alloca(const llvm::Value *v) {
+    while (v) {
+      if (llvm::isa<llvm::AllocaInst>(v)) return v;
+      if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(v)) {
+        v = gep->getPointerOperand();
+      } else if (auto *cast = llvm::dyn_cast<llvm::CastInst>(v)) {
+        v = cast->getOperand(0);
+      } else {
+        break;
+      }
+    }
+    return nullptr;
+  }
+
+  static bool is_valid_expr(const llvm::Instruction &inst) {
+    if (llvm::isa<llvm::AllocaInst>(&inst)) return false;
+    if (llvm::isa<llvm::StoreInst>(&inst)) return false;
+    if (inst.isTerminator()) return false;
+    if (llvm::isa<llvm::PHINode>(&inst)) return false;
+    if (llvm::isa<llvm::CallInst>(&inst)) return false;
+    if (llvm::isa<llvm::InvokeInst>(&inst)) return false;
+    if (inst.getType()->isVoidTy()) return false;
+    return inst.getNumOperands() > 0;
+  }
+
+  CFG AnalysisCtxt::build_cfg(const llvm::Function &func, FunctionAnalysisData &fdata) {
     CFG cfg;
     unordered_map<const llvm::BasicBlock *, uint32_t> bb2id;
 
@@ -32,6 +59,45 @@ namespace cat::opt::ana {
       bi.id = static_cast<uint32_t>(cfg.blocks.size());
       extract_block_def_use(bb, bb2id, bi.def, bi.use);
       cfg.blocks.push_back(std::move(bi));
+    }
+
+    fdata.block_expressions.resize(cfg.blocks.size());
+    fdata.block_defs.resize(cfg.blocks.size());
+
+    for (const auto &bb : func) {
+      auto block_id = bb2id[&bb];
+      for (const auto &inst : bb) {
+        if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+          if (is_valid_var(alloca)) {
+            fdata.alloca_names.insert(alloca);
+            fdata.def2alloca[alloca] = alloca;
+            fdata.block_defs[block_id].insert(alloca);
+          }
+          continue;
+        }
+
+        if (auto *store = llvm::dyn_cast<llvm::StoreInst>(&inst)) {
+          auto *ptr = store->getPointerOperand();
+          if (auto *alloca = trace_to_alloca(ptr)) {
+            if (is_valid_var(alloca)) {
+              fdata.def2alloca[store] = alloca;
+              fdata.block_defs[block_id].insert(store);
+            }
+          }
+        }
+
+        if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&inst)) {
+          if (auto *alloca = trace_to_alloca(load->getPointerOperand())) {
+            if (is_valid_var(alloca))
+              fdata.load2alloca[load] = alloca;
+          }
+        }
+
+        if (is_valid_expr(inst)) {
+          fdata.block_expressions[block_id].insert(&inst);
+          fdata.all_expressions.insert(&inst);
+        }
+      }
     }
 
     for (const auto &bb : func) {
