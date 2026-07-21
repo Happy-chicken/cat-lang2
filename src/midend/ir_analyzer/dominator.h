@@ -1,6 +1,8 @@
 #pragma once
 #include "analysis_ctx.h"
 #include "dataflow_slover.h"
+#include <cstdint>
+#include <vector>
 
 namespace cat::opt::ana {
 
@@ -52,55 +54,165 @@ namespace cat::opt::ana {
     const CFG &cfg;
   };
 
-  inline vector<uint32_t> compute_dom_tree_parents(const CFG &cfg) {
+  inline vector<DomState> compute_dominators(const CFG &cfg) {
     DominatorAnalysis dom_analysis(cfg);
     DataflowSolver<DominatorAnalysis> solver(cfg, dom_analysis);
-    auto dom_states = solver.solve();
-
-    auto n = cfg.size();
-    vector<uint32_t> idom(n, 0xFFFFFFFFu);
-
-    for (uint32_t i = 0; i < n; ++i) {
-      auto &ds = dom_states[i].doms;
-      for (auto d : ds) {
-        if (d == i) continue;
-        bool is_immediate = true;
-        for (auto other : ds) {
-          if (other == i || other == d) continue;
-          if (dom_states[other].doms.count(d) && dom_states[i].doms.count(other)) {
-            is_immediate = false;
-            break;
-          }
-        }
-        if (is_immediate) { idom[i] = d; break; }
-      }
-    }
-    idom[cfg.entry] = cfg.entry;
-    return idom;
+    return solver.solve();
   }
 
-  inline vector<std::set<uint32_t>> compute_dominance_frontier(const CFG &cfg,
-                                                                const vector<uint32_t> &idom) {
+  // opt
+  vector<uint32_t> compute_postorder(const CFG &cfg) {
     auto n = cfg.size();
-    DominatorAnalysis dom_a(cfg);
-    DataflowSolver<DominatorAnalysis> solver(cfg, dom_a);
-    auto ds = solver.solve();
-    vector<std::set<uint32_t>> full_dom(n);
-    for (uint32_t i = 0; i < n; ++i) full_dom[i] = ds[i].doms;
+    vector<bool> visited(n, false);
+    vector<uint32_t> postorder;
+    postorder.reserve(n);
+    auto dfs = [&](auto &self, uint32_t b) -> void {
+      visited[b] = true;
+      for (auto s : cfg.blocks[b].succ) {
+        if (!visited[s]) self(self, s);
+      }
+      postorder.push_back(b);
+    };
+    dfs(dfs, cfg.entry);
+    return postorder;
+  }
 
-    vector<std::set<uint32_t>> df(n);
-    for (uint32_t b = 0; b < n; ++b) {
-      auto preds = cfg.predecessors(b);
-      if (preds.size() < 2) continue;
-      for (auto p : preds) {
-        auto runner = p;
-        while (!full_dom[b].count(runner) && runner != cfg.entry) {
-          df[runner].insert(b);
-          runner = idom[runner];
+  inline vector<uint32_t> compute_reverse_postorder(const CFG &cfg) {
+    auto postorder = compute_postorder(cfg);
+    std::reverse(postorder.begin(), postorder.end());
+    return postorder;
+  }
+
+  uint32_t intersect(uint32_t finger1, uint32_t finger2, const vector<uint32_t> &idoms, const vector<uint32_t> &po_idx) {
+    while (finger1 != finger2) {
+      if (po_idx[finger1] < po_idx[finger2]) {
+        finger1 = idoms[finger1];
+      } else {
+        finger2 = idoms[finger2];
+      }
+    }
+    return finger1;
+  }
+
+  /// compute immediate dominator (IDom) for each node
+  /// 
+  /// Immediate dominator definition: the closest dominator in the dominator tree
+  /// that is not the node itself
+  /// 
+  /// Properties:
+  /// - Each non-entry node has exactly one immediate dominator
+  /// - Immediate dominator relationship forms a tree (dominator tree)
+  /// 
+  /// In the set of strict dominators, find the node that dominates all other strict dominators
+  /// That is: idom(n) = the "largest" element in the set of strict dominators
+  /// 快速计算直接支配者（基于 RPO + intersect）
+  vector<uint32_t> compute_idoms_fast(const CFG & cfg) {
+    auto n = cfg.size();
+    auto entry = cfg.entry;
+    auto post_order = compute_postorder(cfg);
+    vector<uint32_t> po_idx(n);
+    for (uint32_t i = 0; i < n; ++i) {
+      po_idx[post_order[i]] = i;
+    }
+
+    auto rpo = compute_reverse_postorder(cfg);
+    vector<uint32_t> idoms(n, 0xFFFFFFFFu); // 0xFFFFFFFFu means undefined
+    idoms[entry] = entry;
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (auto b : rpo) {
+        if (b == entry) continue;
+        auto preds = cfg.predecessors(b);
+        uint32_t new_idom = 0xFFFFFFFFu;
+        for (auto p : preds) {
+          if (idoms[p] != 0xFFFFFFFFu) {
+            if (new_idom == 0xFFFFFFFFu) {
+              new_idom = p;
+            } else {
+              new_idom = intersect(p, new_idom, idoms, po_idx);
+            }
+          }
+        }
+        if (new_idom != 0xFFFFFFFFu && idoms[b] != new_idom) {
+          idoms[b] = new_idom;
+          changed = true;
         }
       }
     }
+    return idoms;
+  }
+
+  // build dominator from immediate dominator
+  vector<std::set<uint32_t>> compute_dominators_fast(const CFG &cfg, const vector<uint32_t> &idoms) {
+    auto n = cfg.size();
+    vector<std::set<uint32_t>> dominators(n);
+
+    for (uint32_t i = 0; i < n; ++i) {
+      if (i == cfg.entry || idoms[i] == 0xFFFFFFFFu) {
+        continue;
+      }
+      dominators[i].insert(i);
+      auto current = idoms[i];
+      while (current != cfg.entry ) {
+        if (current == 0xFFFFFFFFu) {
+          break; // should not happen, but just in case
+        }
+        dominators[i].insert(current);
+        current = idoms[current];
+      }
+    }
+    return dominators;
+  }
+
+  vector<vector<uint32_t>> compute_dom_tree_children(const vector<uint32_t> &idoms) {
+    auto n = idoms.size();
+    vector<vector<uint32_t>> dom_tree_children(n, vector<uint32_t>());
+    for (uint32_t i = 0; i < n; ++i) {
+      if (idoms[i] != 0xFFFFFFFFu && idoms[i] != i) {
+        dom_tree_children[idoms[i]].push_back(i);
+      }
+    }
+    return dom_tree_children;
+  }
+
+  inline vector<std::set<uint32_t>> compute_dominance_frontier(const CFG &cfg, const vector<uint32_t> &idom) {
+    auto n = cfg.size();
+    vector<std::set<uint32_t>> df(n, std::set<uint32_t>());
+
+    for (uint32_t b = 0; b < n; ++b) {
+        auto preds = cfg.predecessors(b);
+        if (preds.size() < 2) continue;  
+
+        for (auto p : preds) {
+            uint32_t runner = p;
+            while (runner != idom[b]) {
+                df[runner].insert(b);
+                runner = idom[runner];
+            }
+        }
+    }
     return df;
+  }
+
+  std::set<uint32_t> compute_iterated_dominance_frontier(const CFG &cfg, 
+                                                        const vector<uint32_t> &idom,
+                                                        const std::set<uint32_t> &initial) {
+    auto df = compute_dominance_frontier(cfg, idom);
+    std::set<uint32_t> result = initial;
+    std::vector<uint32_t> worklist(initial.begin(), initial.end());
+
+    while (!worklist.empty()) {
+        uint32_t b = worklist.back();
+        worklist.pop_back();
+        
+        for (uint32_t f : df[b]) {
+            if (result.insert(f).second) {
+                worklist.push_back(f);
+            }
+        }
+    }
+    return result;
   }
 
 } // namespace cat::opt::ana
