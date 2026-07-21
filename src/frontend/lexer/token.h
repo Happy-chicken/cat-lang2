@@ -62,6 +62,8 @@ namespace cat {
     None,
     // refernce
     Ref,
+    // move
+    Own,
     // pointer
     Ptr,
     // class
@@ -199,6 +201,8 @@ namespace cat {
         return "None";
       case Ref:
         return "Ref";
+      case Own:
+        return "Own";
       case Ptr:
         return "Ptr";
       case Class:

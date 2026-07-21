@@ -15,13 +15,13 @@
 #include "lexer.h"
 #include "live_variable.h"
 #include "mlir_emitter.h"
-#include "very_busy_expression.h"
-#include "reaching_definition.h"
 #include "parser.h"
 #include "printer.h"
+#include "reaching_definition.h"
 #include "resolver.h"
 #include "sema_checker.h"
 #include "type_checker.h"
+#include "very_busy_expression.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -92,16 +92,23 @@ static void run() {
     def add(a:int, b:int) -> int {
       return a + b;
     }
+    def swap(a:ref int, b:ref int) {
+      let tmp = a;
+      a = b;
+      b = tmp;
+    }
     def main()->int {
       let a = 1;
       let b = 2;
-      if a < b {
-        let c = add(a, b);
-        return c;
-      } else {
-        return 0;
-      }
-      // return add(a, b);
+      swap(a,b);
+      // if a < b {
+      //   let c = add(a, b);
+      //   return c;
+      // } else {
+      //   return 0;
+      // }
+
+      return a;
     }
   )";
 
@@ -185,7 +192,7 @@ int main(int argc, char **argv) {
   bool found = false;
   std::vector<std::string> files;
   if (fs::exists(test_dir) && fs::is_directory(test_dir)) {
-    for (const auto &entry : fs::directory_iterator(test_dir)) {
+    for (const auto &entry: fs::directory_iterator(test_dir)) {
       if (entry.path().extension() == ".cat")
         files.push_back(entry.path().string());
     }
@@ -193,11 +200,12 @@ int main(int argc, char **argv) {
   std::sort(files.begin(), files.end());
 
   int passed = 0, failed = 0;
-  for (const auto &f : files) {
+  for (const auto &f: files) {
     found = true;
     int rc = run_file(f);
     if (rc == 0) ++passed;
-    else ++failed;
+    else
+      ++failed;
     std::cout << std::endl;
   }
 

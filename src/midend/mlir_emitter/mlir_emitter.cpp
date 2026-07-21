@@ -1,7 +1,6 @@
 #include "mlir_emitter.h"
 #include "expr.h"
 #include "item.h"
-#include "stmt.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -9,6 +8,7 @@
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/SymbolTable.h"
+#include "stmt.h"
 
 namespace cat::mmlir {
 
@@ -25,7 +25,7 @@ namespace cat::mmlir {
     inline mlir::MemRefType memref_ty(mlir::Type elem) {
       return mlir::MemRefType::get({}, elem);
     }
-  }
+  }// namespace
 
   MlirEmitter::MlirEmitter(const string & /*name*/, error::DiagCtxt &diag, semantics::SemaCtxt &sema_ctx)
       : ctx(std::make_unique<CodegenCtxt>()),
@@ -74,7 +74,7 @@ namespace cat::mmlir {
   // ── top-level ──
 
   void MlirEmitter::compile(const Program &program) {
-    for (auto &item : program.items) {
+    for (auto &item: program.items) {
       std::visit(
           overload{
               [&](const FunctionDef &f) { compile_function(f, item.span); },
@@ -94,7 +94,7 @@ namespace cat::mmlir {
     ctx->builder->setInsertionPointToEnd(ctx->module.getBody());
 
     llvm::SmallVector<mlir::Type> param_tys;
-    for (auto &p : hdr.params) {
+    for (auto &p: hdr.params) {
       auto t = mlir_type(p.ty);
       if (!t) t = i32_ty(ctx->mlir_ctx);
       param_tys.push_back(t);
@@ -138,7 +138,7 @@ namespace cat::mmlir {
   // ── statements ──
 
   void MlirEmitter::compile_block(const Block &block) {
-    for (auto &s : block.stmts) {
+    for (auto &s: block.stmts) {
       auto *current_block = ctx->builder->getBlock();
       if (!current_block->empty() &&
           current_block->back().hasTrait<mlir::OpTrait::IsTerminator>())
@@ -272,7 +272,8 @@ namespace cat::mmlir {
 
     ctx->builder->setInsertionPointToStart(exit_block);
     if (saved) env->set_loop(*saved);
-    else env->loop_info = std::nullopt;
+    else
+      env->loop_info = std::nullopt;
   }
 
   // ── expressions ──
@@ -286,7 +287,7 @@ namespace cat::mmlir {
         overload{
             [&](const LiteralExpr &e) -> mlir::Value {
               return std::visit(
-                    overload{
+                  overload{
                       [&](int64_t v) -> mlir::Value {
                         auto ty = i32_ty(ctx->mlir_ctx);
                         return ctx->builder->create<mlir::arith::ConstantOp>(loc, ty, ctx->builder->getI32IntegerAttr(static_cast<int32_t>(v))).getResult();
@@ -344,44 +345,44 @@ namespace cat::mmlir {
               switch (e.op) {
                 case BinaryOp::Add:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::AddFOp>(loc, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::AddIOp>(loc, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::AddFOp>(loc, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::AddIOp>(loc, lhs, rhs).getResult();
                 case BinaryOp::Sub:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::SubFOp>(loc, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::SubIOp>(loc, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::SubFOp>(loc, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::SubIOp>(loc, lhs, rhs).getResult();
                 case BinaryOp::Mul:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::MulFOp>(loc, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::MulIOp>(loc, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::MulFOp>(loc, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::MulIOp>(loc, lhs, rhs).getResult();
                 case BinaryOp::Div:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::DivFOp>(loc, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::DivSIOp>(loc, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::DivFOp>(loc, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::DivSIOp>(loc, lhs, rhs).getResult();
                 case BinaryOp::Eq:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OEQ, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OEQ, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, lhs, rhs).getResult();
                 case BinaryOp::NotEq:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::ONE, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::ONE, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, lhs, rhs).getResult();
                 case BinaryOp::Lt:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OLT, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::slt, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OLT, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::slt, lhs, rhs).getResult();
                 case BinaryOp::Gt:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGT, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sgt, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGT, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sgt, lhs, rhs).getResult();
                 case BinaryOp::Le:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OLE, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sle, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OLE, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sle, lhs, rhs).getResult();
                 case BinaryOp::Ge:
                   return is_float
-                      ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGE, lhs, rhs).getResult()
-                      : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sge, lhs, rhs).getResult();
+                             ? ctx->builder->create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGE, lhs, rhs).getResult()
+                             : ctx->builder->create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sge, lhs, rhs).getResult();
                 case BinaryOp::And:
                   return ctx->builder->create<mlir::arith::AndIOp>(loc, lhs, rhs).getResult();
                 case BinaryOp::Or:
@@ -415,14 +416,15 @@ namespace cat::mmlir {
                   overload{
                       [&](const Variable &callee) -> mlir::Value {
                         llvm::SmallVector<mlir::Value> args;
-                        for (auto &a : e.args) {
+                        for (auto &a: e.args) {
                           auto v = compile_expr(*a);
                           if (v) args.push_back(v);
                         }
 
                         mlir::TypeRange result_tys;
                         auto callee_fn = mlir::SymbolTable::lookupNearestSymbolFrom<mlir::func::FuncOp>(
-                            ctx->module, mlir::StringAttr::get(&ctx->mlir_ctx, callee.name));
+                            ctx->module, mlir::StringAttr::get(&ctx->mlir_ctx, callee.name)
+                        );
                         if (callee_fn) {
                           result_tys = callee_fn.getFunctionType().getResults();
                         }
@@ -467,4 +469,4 @@ namespace cat::mmlir {
     os << str;
   }
 
-} // namespace cat::mmlir
+}// namespace cat::mmlir

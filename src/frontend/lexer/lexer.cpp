@@ -31,6 +31,7 @@ namespace cat {
 
       {"void", TokenKind::None},
       {"ref", TokenKind::Ref},
+      {"own", TokenKind::Own},
       {"ptr", TokenKind::Ptr},
 
       {"int", TokenKind::Int},

@@ -22,6 +22,7 @@ namespace cat {
 
   struct ParameterData {
     bool is_ref;
+    bool is_own;
   };
 
   struct ClassData {
@@ -49,7 +50,7 @@ public:
 
     static Symbol new_function(string name, vector<ast::Type> params, ast::Type return_type, Span span);
 
-    static Symbol new_parameter(string name, ast::Type ty, bool is_ref, Span span);
+    static Symbol new_parameter(string name, ast::Type ty, bool is_ref, bool is_own, Span span);
 
     static Symbol new_type(string name, Span span);
 

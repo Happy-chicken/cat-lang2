@@ -18,8 +18,8 @@ namespace cat {
     return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
   }
 
-  Symbol Symbol::new_parameter(string name, ast::Type ty, bool is_ref, Span span) {
-    ParameterData data{is_ref};
+  Symbol Symbol::new_parameter(string name, ast::Type ty, bool is_ref, bool is_own, Span span) {
+    ParameterData data{is_ref, is_own};
     SymbolKind kind = std::move(data);
     return Symbol(std::move(kind), std::move(name), std::move(ty), 0, span);
   }

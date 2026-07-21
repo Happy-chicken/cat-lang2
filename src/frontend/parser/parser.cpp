@@ -800,12 +800,20 @@ namespace cat {
     }
     string param_name = param_token.has_value() ? param_token->lexeme : "self";
     consume(TokenKind::Colon, "Expected ':' after parameter name.");
+    bool is_ref = false, is_own = false;
+    if (check(TokenKind::Ref)) {
+      advance();
+      is_ref = true;
+    } else if (check(TokenKind::Own)) {
+      advance();
+      is_own = true;
+    }
     auto param_type = parse_type();
     if (!param_type.has_value()) {
       return std::nullopt;
     }
     // TODO:
-    return Parameter{std::move(param_name), std::move(*param_type), false};
+    return Parameter{std::move(param_name), std::move(*param_type), is_ref, is_own};
   }
 
   error::ParseResult<FunctionDecl> Parser::parse_header() {

@@ -15,7 +15,9 @@ namespace cat::ir {
 
   struct VarInfo {
     llvm::Value *ptr;
-    llvm::Type *ty;
+    llvm::Type  *alloca_ty;
+    llvm::Type  *value_ty;
+    bool         indirect = false;
     vector<llvm::Type *> deref_chain;
   };
 

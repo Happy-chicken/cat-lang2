@@ -267,7 +267,7 @@ namespace cat::ir {
         *ctx->module, var_ty, gv.ty.has_value(),
         llvm::GlobalValue::ExternalLinkage, cinit, gv.name
     );
-    env->declare_var(gv.name, gv_ptr, var_ty, gv.ty ? ptr_deref_chain(*gv.ty) : vector<llvm::Type *>{});
+    env->declare_var(gv.name, gv_ptr, var_ty, var_ty);
   }
 
   // ── functions ──
@@ -285,7 +285,8 @@ namespace cat::ir {
     auto &hdr = func.function_header;
 
     vector<llvm::Type *> ptypes;
-    for (auto &p: hdr.params) ptypes.push_back(llvm_type(p.ty));
+    for (auto &p : hdr.params)
+      ptypes.push_back((p.is_ref || p.is_own) ? ptr_ty(c) : llvm_type(p.ty));
     auto *ret = hdr.return_type ? llvm_type(*hdr.return_type) : void_ty(c);
 
     auto *ft = llvm::FunctionType::get(ret, ptypes, false);
@@ -297,12 +298,15 @@ namespace cat::ir {
     auto saved_fn = std::exchange(current_function, fn);
     EnvGuard guard(*this, std::make_shared<Env>(env));
 
-    for (size_t i = 0; auto &arg: fn->args()) {
+    for (size_t i = 0; auto &arg : fn->args()) {
       auto &p = hdr.params[i];
       arg.setName(p.name);
       auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr, p.name);
       ctx->builder->CreateStore(&arg, a);
-      env->declare_var(p.name, a, arg.getType(), ptr_deref_chain(p.ty));
+      auto val_ty = llvm_type(p.ty);
+      env->declare_var(p.name, a, arg.getType(), val_ty,
+                       p.is_ref || p.is_own,
+                       ptr_deref_chain(p.ty));
       ++i;
     }
 
@@ -336,7 +340,8 @@ namespace cat::ir {
                                       : i32(*ctx->llvm_ctx);
               auto *a = ctx->builder->CreateAlloca(vt, nullptr, s.name);
               if (iv) ctx->builder->CreateStore(iv, a);
-              env->declare_var(s.name, a, vt, s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{});
+              env->declare_var(s.name, a, vt, vt, false,
+                               s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{});
             },
             [&](const IfStmt &s) { compile_if(s); },
             [&](const LoopStmt &s) { compile_while(s); },
@@ -457,11 +462,14 @@ namespace cat::ir {
             [&](const LiteralExpr &e) { return compile_literal(e); },
             [&](const Variable &e) -> llvm::Value * {
               auto v = env->lookup_var(e.name);
-              if (!v.ptr || !v.ty) {
+              if (!v.ptr || !v.alloca_ty) {
                 diag.error(span, "Undefined variable: " + e.name).emit_to(diag);
                 return llvm::Constant::getNullValue(i32(*ctx->llvm_ctx));
               }
-              return ctx->builder->CreateLoad(v.ty, v.ptr, e.name);
+              auto *val = ctx->builder->CreateLoad(v.alloca_ty, v.ptr, e.name);
+              if (v.indirect)
+                val = ctx->builder->CreateLoad(v.value_ty, val);
+              return val;
             },
             [&](const AssignExpr &e) { return compile_assignment(e); },
             [&](const BinaryExpr &e) { return compile_binary(e); },
@@ -535,6 +543,8 @@ namespace cat::ir {
             overload{
                 [&](const Variable &var) -> llvm::Value * {
                   auto vi = env->lookup_var(var.name);
+                  if (vi.indirect)
+                    return ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
                   return vi.ptr;
                 },
                 [&](const MemberExpr &) -> llvm::Value * {
@@ -649,8 +659,17 @@ namespace cat::ir {
                   args.push_back(zero_const(fn->getFunctionType()->getReturnType()));
                 }
               } else {
-                for (size_t i = 0; i < call.args.size() && i < expected; ++i)
-                  args.push_back(compile_expr(*call.args[i]));
+                for (size_t i = 0; i < call.args.size() && i < expected; ++i) {
+                  auto *arg_val = compile_expr(*call.args[i]);
+                  if (fn->getFunctionType()->getParamType(static_cast<unsigned>(i))->isPointerTy() &&
+                      arg_val && !arg_val->getType()->isPointerTy()) {
+                    if (auto *var = std::get_if<Variable>(&call.args[i]->expr)) {
+                      auto vi = env->lookup_var(var->name);
+                      if (vi.ptr) arg_val = vi.ptr;
+                    }
+                  }
+                  args.push_back(arg_val);
+                }
               }
               return ctx->builder->CreateCall(fn, args);
             },
@@ -671,7 +690,18 @@ namespace cat::ir {
                 return nullptr;
               }
               vector<llvm::Value *> args{self};
-              for (auto &a: call.args) args.push_back(compile_expr(*a));
+              size_t expected = fn->getFunctionType()->getNumParams();
+              for (size_t i = 0; i < call.args.size() && (i + 1) < expected; ++i) {
+                auto *arg_val = compile_expr(*call.args[i]);
+                if (fn->getFunctionType()->getParamType(static_cast<unsigned>(i + 1))->isPointerTy() &&
+                    arg_val && !arg_val->getType()->isPointerTy()) {
+                  if (auto *var = std::get_if<Variable>(&call.args[i]->expr)) {
+                    auto vi = env->lookup_var(var->name);
+                    if (vi.ptr) arg_val = vi.ptr;
+                  }
+                }
+                args.push_back(arg_val);
+              }
               return ctx->builder->CreateCall(fn, args);
             },
             [&](const auto &) -> llvm::Value * {
@@ -690,7 +720,13 @@ namespace cat::ir {
         overload{
             [&](const Variable &t) {
               auto vi = env->lookup_var(t.name);
-              if (vi.ptr) ctx->builder->CreateStore(val, vi.ptr);
+              if (!vi.ptr) return;
+              if (vi.indirect) {
+                auto *dst = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
+                ctx->builder->CreateStore(val, dst);
+              } else {
+                ctx->builder->CreateStore(val, vi.ptr);
+              }
             },
             [&](const MemberExpr &) {
               if (auto *p = compile_member_ptr(*a.target))

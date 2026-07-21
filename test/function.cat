@@ -1,16 +1,19 @@
 let pi:int = 1000;
 
-def add(x: int, y: int) -> int {
+def add(x: ref int, y: int) -> int {
+  x = x + 1;
   return x + y;
 }
 
-def add_one(x:ptr<ptr<int>>) {
-  **x = **x + 1;
+def swap(a: ref int, b: ref int) {
+  let tmp = a;
+  a = b;
+  b = tmp;
 }
 
 def main() ->int {
-  let x = 1;
-  add_one(&&x);
-  let a = add(1, 2);
-  return *&x + a;
+  let x = 10;
+  let y = 20;
+  swap(x, y);
+  return add(x, y);
 }

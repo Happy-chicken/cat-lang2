@@ -11,16 +11,18 @@ namespace cat::ir {
     Env() = default;
     explicit Env(sptr<Env> p) : parent(std::move(p)) {}
 
-    void declare_var(const string &name, llvm::Value *ptr, llvm::Type *ty,
+    void declare_var(const string &name, llvm::Value *ptr,
+                      llvm::Type *alloca_ty, llvm::Type *value_ty,
+                      bool indirect = false,
                       vector<llvm::Type *> deref_chain = {}) {
-      locals[name] = VarInfo{ptr, ty, std::move(deref_chain)};
+      locals[name] = VarInfo{ptr, alloca_ty, value_ty, indirect, std::move(deref_chain)};
     }
 
     VarInfo lookup_var(const string &name) const {
       auto it = locals.find(name);
       if (it != locals.end()) return it->second;
       if (parent) return parent->lookup_var(name);
-      return VarInfo{nullptr, nullptr};
+      return VarInfo{nullptr, nullptr, nullptr};
     }
 
     bool has_var(const string &name) const {
