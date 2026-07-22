@@ -15,6 +15,10 @@ namespace cat::semantics {
             return Type(List{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
           } else if constexpr (std::is_same_v<T, Ptr>) {
             return Type(Ptr{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
+          } else if constexpr (std::is_same_v<T, Ref>) {
+            return Type(Ref{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
+          } else if constexpr (std::is_same_v<T, Own>) {
+            return Type(Own{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
           } else if constexpr (std::is_same_v<T, Func>) {
             vector<Type> cloned_params;
             cloned_params.reserve(v.params.size());
@@ -128,6 +132,12 @@ namespace cat::semantics {
                    ">";
           } else if constexpr (std::is_same_v<T, Ptr>) {
             return "ptr<" + (v.inner ? v.inner->to_string() : string("?")) +
+                   ">";
+          } else if constexpr (std::is_same_v<T, Ref>) {
+            return "ref<" + (v.inner ? v.inner->to_string() : string("?")) +
+                   ">";
+          } else if constexpr (std::is_same_v<T, Own>) {
+            return "own<" + (v.inner ? v.inner->to_string() : string("?")) +
                    ">";
           } else if constexpr (std::is_same_v<T, Func>) {
             std::ostringstream oss;

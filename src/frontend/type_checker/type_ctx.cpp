@@ -38,6 +38,16 @@ namespace cat::semantics {
                 return Type::ptr(self(self, *v.inner));
               }
               return Type::ptr(Type::error());
+            } else if constexpr (std::is_same_v<T, Type::Ref>) {
+              if (v.inner) {
+                return Type::ref(self(self, *v.inner));
+              }
+              return Type::ref(Type::error());
+            } else if constexpr (std::is_same_v<T, Type::Own>) {
+              if (v.inner) {
+                return Type::own(self(self, *v.inner));
+              }
+              return Type::own(Type::error());
             } else if constexpr (std::is_same_v<T, Type::Func>) {
               std::vector<Type> resolved_params;
               resolved_params.reserve(v.params.size());

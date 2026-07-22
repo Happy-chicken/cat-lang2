@@ -21,6 +21,14 @@ namespace cat::ast {
       std::unique_ptr<Type> inner;
     };
 
+    struct Ref {
+      std::unique_ptr<Type> inner;
+    };
+
+    struct Own {
+      std::unique_ptr<Type> inner;
+    };
+
     struct List {
       std::unique_ptr<Type> inner;
     };
@@ -30,7 +38,7 @@ namespace cat::ast {
     };
 
     using Variant =
-        std::variant<Int, Float, Bool, Char, Str, Void, Ptr, List, Class>;
+        std::variant<Int, Float, Bool, Char, Str, Void, Ptr, Ref, Own, List, Class>;
 
     Variant data;
 
@@ -52,13 +60,25 @@ namespace cat::ast {
             if constexpr (!std::is_same_v<T, U>) {
               return false;
             } else {
-              if constexpr (std::is_same_v<T, Ptr>) {
-                if (!a.inner && !b.inner)
-                  return true;
-                if (!a.inner || !b.inner)
-                  return false;
-                return *a.inner == *b.inner;
-              } else if constexpr (std::is_same_v<T, List>) {
+      if constexpr (std::is_same_v<T, Ptr>) {
+        if (!a.inner && !b.inner)
+          return true;
+        if (!a.inner || !b.inner)
+          return false;
+        return *a.inner == *b.inner;
+      } else if constexpr (std::is_same_v<T, Ref>) {
+        if (!a.inner && !b.inner)
+          return true;
+        if (!a.inner || !b.inner)
+          return false;
+        return *a.inner == *b.inner;
+      } else if constexpr (std::is_same_v<T, Own>) {
+        if (!a.inner && !b.inner)
+          return true;
+        if (!a.inner || !b.inner)
+          return false;
+        return *a.inner == *b.inner;
+      } else if constexpr (std::is_same_v<T, List>) {
                 if (!a.inner && !b.inner)
                   return true;
                 if (!a.inner || !b.inner)
@@ -95,6 +115,10 @@ namespace cat::ast {
           return Type(Void{});
         } else if constexpr (std::is_same_v<T, Ptr>) {
           return Type(Ptr{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
+        } else if constexpr (std::is_same_v<T, Ref>) {
+          return Type(Ref{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
+        } else if constexpr (std::is_same_v<T, Own>) {
+          return Type(Own{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
         } else if constexpr (std::is_same_v<T, List>) {
           return Type(List{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
         } else if constexpr (std::is_same_v<T, Class>) {
@@ -125,6 +149,10 @@ namespace cat::ast {
           return "ptr<" + (v.inner ? v.inner->to_string() : "?") + ">";
         } else if constexpr (std::is_same_v<T, Type::List>) {
           return "list<" + (v.inner ? v.inner->to_string() : "?") + ">";
+        } else if constexpr (std::is_same_v<T, Type::Ref>) {
+          return "ref<" + (v.inner ? v.inner->to_string() : "?") + ">";
+        } else if constexpr (std::is_same_v<T, Type::Own>) {
+          return "own<" + (v.inner ? v.inner->to_string() : "?") + ">";
         } else if constexpr (std::is_same_v<T, Type::Class>) {
           return v.name;
         } else {
@@ -144,6 +172,14 @@ namespace cat::ast {
 
   inline Type type_ptr(Type inner) {
     return Type(Type::Ptr{std::make_unique<Type>(std::move(inner))});
+  }
+
+  inline Type type_ref(Type inner) {
+    return Type(Type::Ref{std::make_unique<Type>(std::move(inner))});
+  }
+
+  inline Type type_own(Type inner) {
+    return Type(Type::Own{std::make_unique<Type>(std::move(inner))});
   }
 
   inline Type type_list(Type inner) {

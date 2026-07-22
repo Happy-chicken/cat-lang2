@@ -56,6 +56,24 @@ error::UnifyResult<semantics::Type> Unifier::unify(const Type &t1,
               return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
             return Type::ptr(std::move(std::get<Type>(inner)));
           },
+          [&](const Type::Ref &ra, const Type::Ref &rb)
+              -> error::UnifyResult<semantics::Type> {
+            if (!ra.inner || !rb.inner)
+              return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+            auto inner = unify(*ra.inner, *rb.inner);
+            if (std::holds_alternative<error::UnifyError>(inner))
+              return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+            return Type::ref(std::move(std::get<Type>(inner)));
+          },
+          [&](const Type::Own &oa, const Type::Own &ob)
+              -> error::UnifyResult<semantics::Type> {
+            if (!oa.inner || !ob.inner)
+              return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+            auto inner = unify(*oa.inner, *ob.inner);
+            if (std::holds_alternative<error::UnifyError>(inner))
+              return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+            return Type::own(std::move(std::get<Type>(inner)));
+          },
           [&](const Type::Func &fa, const Type::Func &fb)
               -> error::UnifyResult<semantics::Type> {
             if (fa.params.size() != fb.params.size())
@@ -119,6 +137,12 @@ bool Unifier::occurs_check(TypedVar var, const Type &ty) {
           },
           [&](const Type::Ptr &p) {
             return p.inner && occurs_check(var, *p.inner);
+          },
+          [&](const Type::Ref &r) {
+            return r.inner && occurs_check(var, *r.inner);
+          },
+          [&](const Type::Own &o) {
+            return o.inner && occurs_check(var, *o.inner);
           },
           [&](const Type::Func &f) {
             for (const auto &param : f.params) {

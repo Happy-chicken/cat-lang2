@@ -228,6 +228,14 @@ namespace cat {
         if (v.inner) {
           collect_class_deps(*v.inner, deps);
         }
+      } else if constexpr (std::is_same_v<T, ast::Type::Ref>) {
+        if (v.inner) {
+          collect_class_deps(*v.inner, deps);
+        }
+      } else if constexpr (std::is_same_v<T, ast::Type::Own>) {
+        if (v.inner) {
+          collect_class_deps(*v.inner, deps);
+        }
       } else if constexpr (std::is_same_v<T, ast::Type::List>) {
         if (v.inner) {
           collect_class_deps(*v.inner, deps);

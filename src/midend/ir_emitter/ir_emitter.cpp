@@ -60,6 +60,8 @@ namespace cat::ir {
           if constexpr (std::is_same_v<T, ast::Type::Void>) return void_ty(c);
           if constexpr (std::is_same_v<T, ast::Type::Str>) return ptr_ty(c);
           if constexpr (std::is_same_v<T, ast::Type::Ptr>) return ptr_ty(c);
+          if constexpr (std::is_same_v<T, ast::Type::Own>) return ptr_ty(c);
+          if constexpr (std::is_same_v<T, ast::Type::Ref>) return ptr_ty(c);
           if constexpr (std::is_same_v<T, ast::Type::List>) {
             if (!v.inner) return ptr_ty(c);
             auto et = llvm_type(*v.inner);
@@ -95,10 +97,22 @@ namespace cat::ir {
   vector<llvm::Type *> IrEmitter::ptr_deref_chain(const ast::Type &ast_type) {
     vector<llvm::Type *> chain;
     const ast::Type *cur = &ast_type;
-    while (auto *ptr = std::get_if<ast::Type::Ptr>(&cur->data)) {
-      cur = ptr->inner.get();
-      if (!cur) break;
-      chain.push_back(llvm_type(*cur));
+    while (cur) {
+      if (auto *ptr = std::get_if<ast::Type::Ptr>(&cur->data)) {
+        cur = ptr->inner.get();
+        if (!cur) break;
+        chain.push_back(llvm_type(*cur));
+      } else if (auto *ref = std::get_if<ast::Type::Ref>(&cur->data)) {
+        cur = ref->inner.get();
+        if (!cur) break;
+        chain.push_back(llvm_type(*cur));
+      } else if (auto *own = std::get_if<ast::Type::Own>(&cur->data)) {
+        cur = own->inner.get();
+        if (!cur) break;
+        chain.push_back(llvm_type(*cur));
+      } else {
+        break;
+      }
     }
     return chain;
   }
@@ -285,8 +299,11 @@ namespace cat::ir {
     auto &hdr = func.function_header;
 
     vector<llvm::Type *> ptypes;
-    for (auto &p : hdr.params)
-      ptypes.push_back((p.is_ref || p.is_own) ? ptr_ty(c) : llvm_type(p.ty));
+    for (auto &p : hdr.params) {
+      bool is_ref = std::get_if<ast::Type::Ref>(&p.ty.data) != nullptr;
+      bool is_own = std::get_if<ast::Type::Own>(&p.ty.data) != nullptr;
+      ptypes.push_back((is_ref || is_own) ? ptr_ty(c) : llvm_type(p.ty));
+    }
     auto *ret = hdr.return_type ? llvm_type(*hdr.return_type) : void_ty(c);
 
     auto *ft = llvm::FunctionType::get(ret, ptypes, false);
@@ -304,9 +321,37 @@ namespace cat::ir {
       auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr, p.name);
       ctx->builder->CreateStore(&arg, a);
       auto val_ty = llvm_type(p.ty);
+      bool is_ref = std::get_if<ast::Type::Ref>(&p.ty.data) != nullptr;
+      bool is_own = std::get_if<ast::Type::Own>(&p.ty.data) != nullptr;
+      if (is_ref) {
+        auto &ref = std::get<ast::Type::Ref>(p.ty.data);
+        val_ty = ref.inner ? llvm_type(*ref.inner) : val_ty;
+      } else if (is_own) {
+        auto &own = std::get<ast::Type::Own>(p.ty.data);
+        val_ty = own.inner ? llvm_type(*own.inner) : val_ty;
+      }
       env->declare_var(p.name, a, arg.getType(), val_ty,
-                       p.is_ref || p.is_own,
+                       is_ref || is_own,
                        ptr_deref_chain(p.ty));
+
+      if (!is_ref && !is_own && std::get_if<ast::Type::List>(&p.ty.data)) {
+        auto &list_t = std::get<ast::Type::List>(p.ty.data);
+        auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
+        auto *st = llvm::cast<llvm::StructType>(arg.getType());
+        auto &b = *ctx->builder;
+        auto *len_val = b.CreateExtractValue(&arg, {0u});
+        auto *old_data = b.CreateExtractValue(&arg, {2u});
+        auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
+            llvm::ConstantExpr::getSizeOf(et), i64(c));
+        auto *total = b.CreateMul(len_val, elem_sz);
+        auto *malloc_fn = declare_runtime_func("malloc", ptr_ty(c), {i64(c)});
+        auto *new_data = b.CreateCall(malloc_fn, {total}, "listcopy");
+        auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c),
+                                                {ptr_ty(c), ptr_ty(c), i64(c)});
+        b.CreateCall(memcpy_fn, {new_data, old_data, total});
+        b.CreateStore(new_data, b.CreateStructGEP(st, a, 2u));
+      }
+
       ++i;
     }
 

@@ -38,6 +38,12 @@ Type Inferer::ast_type_to_semantic_type(const ast::Type &ast_type) {
           [](const ast::Type::Ptr &ptr) -> Type {
             return Type::ptr(ast_type_to_semantic_type(*ptr.inner));
           },
+          [](const ast::Type::Ref &ref) -> Type {
+            return Type::ref(ast_type_to_semantic_type(*ref.inner));
+          },
+          [](const ast::Type::Own &own) -> Type {
+            return Type::own(ast_type_to_semantic_type(*own.inner));
+          },
           [](const ast::Type::List &list) -> Type {
             return Type::list(ast_type_to_semantic_type(*list.inner));
           },
@@ -152,13 +158,25 @@ Type Inferer::infer_identifier(const Variable &var, Span span, SemaCtxt &ctxt,
   return std::visit(
       overloaded{
           [&](const VariableData &) -> Type {
-            if (sym->get_type().has_value())
-              return ast_type_to_semantic_type(*sym->get_type());
+            if (sym->get_type().has_value()) {
+              auto ty = ast_type_to_semantic_type(*sym->get_type());
+              if (auto *ref = std::get_if<Type::Ref>(&ty.get_data()))
+                return ref->inner ? ref->inner->clone() : Type::error();
+              if (auto *own = std::get_if<Type::Own>(&ty.get_data()))
+                return own->inner ? own->inner->clone() : Type::error();
+              return ty;
+            }
             return Type::error();
           },
           [&](const ParameterData &) -> Type {
-            if (sym->get_type().has_value())
-              return ast_type_to_semantic_type(*sym->get_type());
+            if (sym->get_type().has_value()) {
+              auto ty = ast_type_to_semantic_type(*sym->get_type());
+              if (auto *ref = std::get_if<Type::Ref>(&ty.get_data()))
+                return ref->inner ? ref->inner->clone() : Type::error();
+              if (auto *own = std::get_if<Type::Own>(&ty.get_data()))
+                return own->inner ? own->inner->clone() : Type::error();
+              return ty;
+            }
             return Type::error();
           },
           [&](const FunctionData &func) -> Type {
@@ -291,7 +309,12 @@ Type Inferer::infer_unary(const UnaryExpr &unary, Span span, SemaCtxt &ctxt,
         return ptr->inner->clone();
       }
     }
-    diag.error(span, "Dereference requires pointer type")
+    if (auto *ref = std::get_if<Type::Ref>(&resolved.get_data())) {
+      if (ref->inner) {
+        return ref->inner->clone();
+      }
+    }
+    diag.error(span, "Dereference requires pointer or reference type")
         .note("Got: " + resolved.to_string())
         .emit_to(diag);
     return Type::error();
@@ -334,8 +357,25 @@ Type Inferer::infer_call(const CallExpr &call, Span span, SemaCtxt &ctxt,
 
     Unifier unifier(ctxt.get_type_ctxt());
     for (size_t i = 0; i < arg_types.size(); ++i) {
-      auto result = unifier.unify(arg_types[i], func->params[i + param_offset]);
-      if (std::holds_alternative<error::UnifyError>(result)) {
+      auto &expected = func->params[i + param_offset];
+      auto resolved_expected = ctxt.get_type_ctxt().resolve_type(expected);
+      auto resolved_arg = ctxt.get_type_ctxt().resolve_type(arg_types[i]);
+
+      bool ok = false;
+      if (auto *ref_exp = std::get_if<Type::Ref>(&resolved_expected.get_data())) {
+        auto inner_expected = ref_exp->inner ? ref_exp->inner->clone() : Type::error();
+        auto result = unifier.unify(resolved_arg, inner_expected);
+        ok = !std::holds_alternative<error::UnifyError>(result);
+      } else if (auto *ref_arg = std::get_if<Type::Ref>(&resolved_arg.get_data())) {
+        auto inner_arg = ref_arg->inner ? ref_arg->inner->clone() : Type::error();
+        auto result = unifier.unify(inner_arg, resolved_expected);
+        ok = !std::holds_alternative<error::UnifyError>(result);
+      } else {
+        auto result = unifier.unify(resolved_arg, resolved_expected);
+        ok = !std::holds_alternative<error::UnifyError>(result);
+      }
+
+      if (!ok) {
         diag.error(span, "Argument " + std::to_string(i + 1) + " type mismatch")
             .note("Expected: " + func->params[i + param_offset].to_string())
             .note("Found: " + arg_types[i].to_string())

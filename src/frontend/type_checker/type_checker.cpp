@@ -1,5 +1,6 @@
 #include "type_checker.h"
 #include "../ast/type.h"
+#include "type.h"
 #include "unifier.h"
 
 namespace cat::semantics {
@@ -30,6 +31,19 @@ namespace cat::semantics {
                 return ast::type_ptr(inner->clone());
               return std::nullopt;
             },
+            [&](const Type::Ref &ref) -> optional<ast::Type> {
+              auto inner = semantic_type_to_ast_type(*ref.inner);
+              if (inner.has_value()) {
+                return ast::type_ref(inner->clone());
+              }
+              return std::nullopt;
+            },
+            [&](const Type::Own &own) -> optional<ast::Type> {
+              auto inner = semantic_type_to_ast_type(*own.inner);
+              if (inner.has_value())
+                return ast::type_own(inner->clone());
+              return std::nullopt;
+            },
             [&](const Type::List &list) -> optional<ast::Type> {
               auto inner = semantic_type_to_ast_type(*list.inner);
               if (inner.has_value())
@@ -49,8 +63,10 @@ namespace cat::semantics {
     ctx.get_symbol_table().enter_scope(ScopeKind::Function);
 
     for (const auto &param: func.function_header.params) {
+      bool is_ref = std::get_if<ast::Type::Ref>(&param.ty.data) != nullptr;
+      bool is_own = std::get_if<ast::Type::Own>(&param.ty.data) != nullptr;
       Symbol param_sym =
-          Symbol::new_parameter(param.name, param.ty.clone(), param.is_ref, param.is_own, span);
+          Symbol::new_parameter(param.name, param.ty.clone(), is_ref, is_own, span);
       ctx.get_symbol_table().declare(std::move(param_sym));
     }
 
@@ -89,6 +105,30 @@ namespace cat::semantics {
                 stored_type = semantic_type_to_ast_type(
                     ctx.get_type_ctxt().resolve_type(inferred)
                 );
+              }
+              if (auto ref_ty = std::get_if<ast::Type::Ref>(&stored_type->data)) {
+                if (auto inner_ref = std::get_if<ast::Type::Ref>(&ref_ty->inner->data) != nullptr) {
+                  diag.error(span, "Cannot have a reference to a reference")
+                      .emit_to(diag);
+                  return;
+                }
+                if (auto inner_own = std::get_if<ast::Type::Own>(&ref_ty->inner->data) != nullptr) {
+                  diag.error(span, "Cannot have a reference to an owned type")
+                      .emit_to(diag);
+                  return;
+                }
+              }
+              if (auto own_ty = std::get_if<ast::Type::Own>(&stored_type->data)) {
+                if (auto inner_ref = std::get_if<ast::Type::Ref>(&own_ty->inner->data) != nullptr) {
+                  diag.error(span, "Cannot have ownership of a reference")
+                      .emit_to(diag);
+                  return;
+                }
+                if (auto inner_own = std::get_if<ast::Type::Own>(&own_ty->inner->data) != nullptr) {
+                  diag.error(span, "Cannot have ownership of an owned type")
+                      .emit_to(diag);
+                  return;
+                }
               }
               Symbol var_sym = Symbol::new_variable(
                   var_def.name, std::move(stored_type), false, span

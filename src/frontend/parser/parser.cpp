@@ -773,6 +773,26 @@ namespace cat {
         consume(TokenKind::Greater, "Expected '>' after pointer type.");
         return type_ptr(std::move(*pointee_type));
       }
+      case TokenKind::Ref: {
+        advance();
+        consume(TokenKind::Less, "Expected '<' after 'ref'.");
+        auto referent_type = parse_type();
+        if (!referent_type.has_value()) {
+          return std::nullopt;
+        }
+        consume(TokenKind::Greater, "Expected '>' after reference type.");
+        return type_ref(std::move(*referent_type));
+      }
+      case TokenKind::Own: {
+        advance();
+        consume(TokenKind::Less, "Expected '<' after 'own'.");
+        auto owned_type = parse_type();
+        if (!owned_type.has_value()) {
+          return std::nullopt;
+        }
+        consume(TokenKind::Greater, "Expected '>' after owned type.");
+        return type_own(std::move(*owned_type));
+      }
       case TokenKind::List: {
         advance();
         consume(TokenKind::Less, "Expected '<' after 'list'.");
@@ -801,19 +821,12 @@ namespace cat {
     string param_name = param_token.has_value() ? param_token->lexeme : "self";
     consume(TokenKind::Colon, "Expected ':' after parameter name.");
     bool is_ref = false, is_own = false;
-    if (check(TokenKind::Ref)) {
-      advance();
-      is_ref = true;
-    } else if (check(TokenKind::Own)) {
-      advance();
-      is_own = true;
-    }
     auto param_type = parse_type();
     if (!param_type.has_value()) {
       return std::nullopt;
     }
     // TODO:
-    return Parameter{std::move(param_name), std::move(*param_type), is_ref, is_own};
+    return Parameter{std::move(param_name), std::move(*param_type)};
   }
 
   error::ParseResult<FunctionDecl> Parser::parse_header() {

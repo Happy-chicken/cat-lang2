@@ -60,6 +60,28 @@ public:
 
     bool is_type() const { return std::holds_alternative<TypeData>(kind); }
 
+    bool is_class() const { return std::holds_alternative<ClassData>(kind); }
+
+    bool is_trait() const { return std::holds_alternative<TraitData>(kind); }
+
+    bool is_variable() const { return std::holds_alternative<VariableData>(kind); }
+
+    bool is_function() const { return std::holds_alternative<FunctionData>(kind); }
+
+    bool is_ref() const {
+      if (auto *param = std::get_if<ParameterData>(&kind)) {
+        return param->is_ref;
+      }
+      return false;
+    }
+
+    bool is_own() const {
+      if (auto *param = std::get_if<ParameterData>(&kind)) {
+        return param->is_own;
+      }
+      return false;
+    }
+
     bool is_callable() const;
 
     const char *kindname() const;

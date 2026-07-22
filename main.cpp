@@ -15,13 +15,13 @@
 #include "lexer.h"
 #include "live_variable.h"
 #include "mlir_emitter.h"
+#include "very_busy_expression.h"
+#include "reaching_definition.h"
 #include "parser.h"
 #include "printer.h"
-#include "reaching_definition.h"
 #include "resolver.h"
 #include "sema_checker.h"
 #include "type_checker.h"
-#include "very_busy_expression.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -89,26 +89,16 @@ static int run_file(const std::string &path) {
 
 static void run() {
   std::string source = R"(
-    def add(a:int, b:int) -> int {
-      return a + b;
+    def add(x: ref<list<int>>, y: int) -> int {
+      x[0] = x[0] + y;
+      return x[0] + y;
     }
-    def swap(a:ref int, b:ref int) {
-      let tmp = a;
-      a = b;
-      b = tmp;
-    }
-    def main()->int {
-      let a = 1;
-      let b = 2;
-      swap(a,b);
-      // if a < b {
-      //   let c = add(a, b);
-      //   return c;
-      // } else {
-      //   return 0;
-      // }
 
-      return a;
+    def main()->int {
+      let x = [1, 2, 3];
+      let y = 20;
+      add(x, y);
+      return x[0];
     }
   )";
 
@@ -143,9 +133,9 @@ static void run() {
   cat::ir::IrEmitter emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
   emitter.compile(program);
 
-  cat::mmlir::MlirEmitter mlir_emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
-  mlir_emitter.compile(program);
-  mlir_emitter.dump_module(std::cout);
+  // cat::mmlir::MlirEmitter mlir_emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
+  // mlir_emitter.compile(program);
+  // mlir_emitter.dump_module(std::cout);
 
   cat::opt::ana::AnalysisCtxt analysis_ctx(emitter.get_module());
   const auto &cfgs = analysis_ctx.get_cfgs();
@@ -167,6 +157,17 @@ static void run() {
 
     // auto reaching_defs = cat::opt::ana::compute_reaching_definitions(cfg, *analysis_ctx.get_func_data().at(fn_name));
   }
+
+  // std::cout << "\n--- Andersen points-to ---\n";
+  // for (const auto &func : emitter.get_module()) {
+  //   if (func.getName().starts_with("llvm.")) continue;
+  //   auto andersen = cat::opt::ana::compute_andersen(func);
+  //   std::cout << func.getName().str() << ":\n";
+  //   std::string s;
+  //   llvm::raw_string_ostream os(s);
+  //   andersen->dump(os);
+  //   std::cout << s;
+  // }
 
   cat::jit::JIT jit(diag_ctxt);
   jit.add_symbol("malloc", reinterpret_cast<void *>(&malloc));

@@ -8,8 +8,6 @@ namespace cat {
   struct Parameter {
     std::string name;
     ast::Type ty;
-    bool is_ref;
-    bool is_own;
   };
 
   struct FunctionDecl {

@@ -7,10 +7,52 @@
 
 namespace cat {
 
+  static bool validate_ref_own_nesting(const ast::Type &ty, Span span,
+                                        error::DiagCtxt &diag) {
+    return std::visit(
+        [&](const auto &v) -> bool {
+          using T = std::decay_t<decltype(v)>;
+          if constexpr (std::is_same_v<T, ast::Type::Ref>) {
+            if (v.inner) {
+              if (std::get_if<ast::Type::Ref>(&v.inner->data) ||
+                  std::get_if<ast::Type::Own>(&v.inner->data)) {
+                diag.error(span, "reference cannot wrap reference or ownership type (ref<" +
+                                     v.inner->to_string() + ">)")
+                    .emit_to(diag);
+                return false;
+              }
+              return validate_ref_own_nesting(*v.inner, span, diag);
+            }
+          } else if constexpr (std::is_same_v<T, ast::Type::Own>) {
+            if (v.inner) {
+              if (std::get_if<ast::Type::Ref>(&v.inner->data) ||
+                  std::get_if<ast::Type::Own>(&v.inner->data)) {
+                diag.error(span, "ownership cannot wrap reference or ownership type (own<" +
+                                     v.inner->to_string() + ">)")
+                    .emit_to(diag);
+                return false;
+              }
+              return validate_ref_own_nesting(*v.inner, span, diag);
+            }
+          } else if constexpr (std::is_same_v<T, ast::Type::Ptr>) {
+            if (v.inner)
+              return validate_ref_own_nesting(*v.inner, span, diag);
+          } else if constexpr (std::is_same_v<T, ast::Type::List>) {
+            if (v.inner)
+              return validate_ref_own_nesting(*v.inner, span, diag);
+          }
+          return true;
+        },
+        ty.data);
+  }
+
   void SemaChecker::check_function(const FunctionDef &func, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
     ctx.get_symbol_table().enter_scope(ScopeKind::Function);
     for (const auto &param: func.function_header.params) {
-      Symbol param_sym = Symbol::new_parameter(param.name, param.ty.clone(), param.is_ref, param.is_own, span);
+      validate_ref_own_nesting(param.ty, span, diag);
+      bool is_ref = std::get_if<ast::Type::Ref>(&param.ty.data) != nullptr;
+      bool is_own = std::get_if<ast::Type::Own>(&param.ty.data) != nullptr;
+      Symbol param_sym = Symbol::new_parameter(param.name, param.ty.clone(), is_ref, is_own, span);
       auto existing = ctx.get_symbol_table().declare(std::move(param_sym));
       if (existing) {
         diag.error(span, "Parameter name '" + param.name + "' is already declared in this scope")
@@ -18,6 +60,9 @@ namespace cat {
             .emit_to(diag);
       }
     }
+
+    if (func.function_header.return_type.has_value())
+      validate_ref_own_nesting(*func.function_header.return_type, span, diag);
 
     for (const auto &stmt: func.body.stmts) {
       check_stmt(stmt, stmt.span, ctx, diag);
@@ -80,6 +125,7 @@ namespace cat {
               optional<size_t> list_len;
               optional<ast::Type> var_ty;
               if (var_def.ty.has_value()) {
+                validate_ref_own_nesting(*var_def.ty, span, diag);
                 var_ty = var_def.ty->clone();
               }
               if (var_def.init.has_value()) {
@@ -315,6 +361,8 @@ namespace cat {
   }
 
   void SemaChecker::check_global_var(const GlobalVar &gv, Span span, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
+    if (gv.ty.has_value())
+      validate_ref_own_nesting(*gv.ty, span, diag);
     if (gv.init.has_value()) {
       check_expr(*gv.init, gv.init->span, ctx, diag);
     }
@@ -322,6 +370,7 @@ namespace cat {
 
   void SemaChecker::check_class_defaults(const Class &cls, semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
     for (const auto &field: cls.fields) {
+      validate_ref_own_nesting(field.ty, Span{}, diag);
       if (field.init.has_value()) {
         check_expr(*field.init, field.init->span, ctx, diag);
       }

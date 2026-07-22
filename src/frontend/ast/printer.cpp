@@ -75,6 +75,12 @@ std::string type_to_string(const Type &type) {
                  [&](const Type::Ptr &t) {
                    ss << "Ptr<" << type_to_string(*t.inner) << ">";
                  },
+                  [&](const Type::Ref &t) {
+                    ss << "Ref<" << type_to_string(*t.inner) << ">";
+                  },
+                  [&](const Type::Own &t) {
+                    ss << "Own<" << type_to_string(*t.inner) << ">";
+                  },
                  [&](const Type::List &t) {
                    ss << "List<" << type_to_string(*t.inner) << ">";
                  },

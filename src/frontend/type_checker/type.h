@@ -28,6 +28,12 @@ public:
     struct Ptr {
       uptr<Type> inner;
     };
+    struct Ref {
+      uptr<Type> inner;
+    };
+    struct Own {
+      uptr<Type> inner;
+    };
     struct Func {
       vector<Type> params;
       uptr<Type> ret;
@@ -41,7 +47,7 @@ public:
     struct Error {};
 
     using Variant =
-        std::variant<Prim, Var, List, Ptr, Func, Class, TraitObject, Error>;
+        std::variant<Prim, Var, List, Ptr, Ref, Own, Func, Class, TraitObject, Error>;
 
     Type() : data(Error{}) {}
 
@@ -68,6 +74,12 @@ public:
     }
     static Type ptr(Type inner) {
       return Type(Ptr{std::make_unique<Type>(std::move(inner))});
+    }
+    static Type ref(Type inner) {
+      return Type(Ref{std::make_unique<Type>(std::move(inner))});
+    }
+    static Type own(Type inner) {
+      return Type(Own{std::make_unique<Type>(std::move(inner))});
     }
     static Type func(vector<Type> params, Type ret) {
       return Type(
