@@ -35,6 +35,7 @@ static void run() {
     def main()->int {
       let x = [1, 2, 3];
       let y = 20;
+      let z = 1;
       add(x, y);
       return x[0];
     }

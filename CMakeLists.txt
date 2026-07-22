@@ -78,7 +78,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/sema_checker)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/type_checker)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ast_optimizer)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer/dataflow)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer/pointer)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_emitter)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/mlir_emitter)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer)
@@ -94,7 +95,8 @@ file(GLOB_RECURSE SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/type_checker/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ast_optimizer/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer/dataflow/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_analyzer/pointer/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_emitter/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/mlir_emitter/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer/*.cpp"

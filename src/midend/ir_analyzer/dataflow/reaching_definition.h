@@ -14,7 +14,7 @@ public:
         gen_map.resize(n);
         kill_map.resize(n);
 
-        unordered_map<const llvm::Value *, ValueSet, ConstValuePtrHash> alloca_to_defs;
+        llvm::DenseMap<const llvm::Value *, ValueSet> alloca_to_defs;
 
         for (size_t i = 0; i < n; ++i) {
             for (auto *def : fdata.block_defs[i]) {

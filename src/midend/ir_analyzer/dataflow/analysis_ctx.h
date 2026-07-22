@@ -1,23 +1,16 @@
 #pragma once
 #include "common.h"
 #include <llvm-20/llvm/ADT/DenseMap.h>
+#include <llvm-20/llvm/ADT/DenseSet.h>
 #include <llvm-20/llvm/IR/BasicBlock.h>
 #include <llvm-20/llvm/IR/Function.h>
 #include <llvm-20/llvm/IR/Instruction.h>
 #include <llvm-20/llvm/IR/Module.h>
 #include <llvm-20/llvm/IR/Value.h>
-#include <set>
-#include <unordered_set>
 
 namespace cat::opt::ana {
 
-  struct ConstValuePtrHash {
-    size_t operator()(const llvm::Value *v) const noexcept {
-      return reinterpret_cast<size_t>(v);
-    }
-  };
-
-  using ValueSet = std::unordered_set<const llvm::Value *, ConstValuePtrHash>;
+  using ValueSet = llvm::DenseSet<const llvm::Value *>;
 
   struct BlockInfo {
     uint32_t id;
@@ -43,8 +36,8 @@ namespace cat::opt::ana {
 
   struct FunctionAnalysisData {
     ValueSet alloca_names;
-    unordered_map<const llvm::Value *, const llvm::Value *, ConstValuePtrHash> load2alloca;
-    unordered_map<const llvm::Value *, const llvm::Value *, ConstValuePtrHash> def2alloca;
+    llvm::DenseMap<const llvm::Value *, const llvm::Value *> load2alloca;
+    llvm::DenseMap<const llvm::Value *, const llvm::Value *> def2alloca;
     vector<ValueSet> block_expressions;
     ValueSet all_expressions;
     vector<ValueSet> block_defs;
