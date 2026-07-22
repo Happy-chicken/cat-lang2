@@ -27,7 +27,7 @@
 
 static void run() {
   std::string source = R"(
-    def add(x: ref list<int>, y: int) -> int {
+    def add(x: list<int>, y: int) -> int {
       x[0] = x[0] + y;
       return x[0] + y;
     }
