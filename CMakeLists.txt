@@ -101,9 +101,7 @@ file(GLOB_RECURSE SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer/passes/*.cpp"
 )
 
-list(APPEND SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
-
-add_executable(catlang ${SOURCES})
+add_library(catlang_lib STATIC ${SOURCES})
 
 llvm_map_components_to_libnames(LLVM_LIBS
     Analysis
@@ -118,7 +116,9 @@ llvm_map_components_to_libnames(LLVM_LIBS
     native
 )
 list(REMOVE_DUPLICATES LLVM_LIBS)
-target_link_libraries(catlang PRIVATE ${LLVM_LIBS}
+
+add_executable(catlang main.cpp)
+target_link_libraries(catlang PRIVATE catlang_lib ${LLVM_LIBS}
     MLIRIR
     MLIRParser
     MLIRPass
@@ -132,11 +132,39 @@ target_link_libraries(catlang PRIVATE ${LLVM_LIBS}
 
 if(IS_MACOS)
     target_compile_options(catlang PRIVATE -g -O0 -fstandalone-debug)
+    target_compile_options(catlang_lib PRIVATE -g -O0 -fstandalone-debug)
     target_link_options(catlang PRIVATE -Wl,-search_paths_first)
 elseif(IS_LINUX)
     target_compile_options(catlang PRIVATE -g -O0 -fstandalone-debug)
+    target_compile_options(catlang_lib PRIVATE -g -O0 -fstandalone-debug)
     target_link_options(catlang PRIVATE -rdynamic)
 endif()
+
+# Google Test
+include(FetchContent)
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        v1.15.2
+)
+set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+file(GLOB_RECURSE TEST_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
+)
+add_executable(tests ${TEST_SOURCES})
+target_link_libraries(tests PRIVATE catlang_lib gtest gtest_main pthread
+    ${LLVM_LIBS}
+    MLIRIR MLIRParser MLIRPass MLIRSupport MLIRExecutionEngine
+    MLIRArithDialect MLIRControlFlowDialect MLIRFuncDialect MLIRMemRefDialect
+)
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(tests PRIVATE -g -O0 -fstandalone-debug)
+target_link_options(tests PRIVATE -Wl,-search_paths_first)
+
+include(GoogleTest)
+gtest_discover_tests(tests)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 

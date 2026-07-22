@@ -56,7 +56,8 @@ namespace cat {
     }
     auto span = current_span();
     diag_ctxt.error(span, string(msg))
-        .note("Expected " + string(tokenkind_to_string(kind)) + ", but found " + (current_token.has_value() ? string(tokenkind_to_string(current_token->kind)) : "EOF"));
+        .note("Expected " + string(tokenkind_to_string(kind)) + ", but found " + (current_token.has_value() ? string(tokenkind_to_string(current_token->kind)) : "EOF"))
+        .emit_to(diag_ctxt);
     return std::nullopt;
   }
 

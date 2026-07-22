@@ -1,9 +1,0 @@
-class Point {
-  let x: int = 0;
-  let y: int = 0;
-}
-
-def main() ->int {
-  let p = Point(3, 7);
-  return p.x + p.y;
-}
