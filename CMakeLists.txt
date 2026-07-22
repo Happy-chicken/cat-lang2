@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
 project(catlang)
 
-# 设置 C++ 标准
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON) 
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(IS_MACOS TRUE)
@@ -18,13 +18,11 @@ else()
 endif()
 
 if(IS_MACOS)
-    # macOS: 使用 llvm-config 查找
     find_program(LLVM_CONFIG_EXECUTABLE
         NAMES llvm-config-20 llvm-config
         PATHS /opt/homebrew/bin /usr/local/bin /usr/bin
         NO_DEFAULT_PATH
     )
-    
     if(LLVM_CONFIG_EXECUTABLE)
         execute_process(
             COMMAND ${LLVM_CONFIG_EXECUTABLE} --cmakedir
@@ -44,19 +42,14 @@ if(IS_MACOS)
             NO_DEFAULT_PATH
         )
     endif()
-    
     find_package(LLVM REQUIRED CONFIG)
     message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
-
     find_package(MLIR REQUIRED CONFIG)
     message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
-
 elseif(IS_LINUX)
-    # Ubuntu/Linux: 直接指定版本查找
     find_package(LLVM 20.1.8 REQUIRED CONFIG)
     message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
     set(MLIR_CMAKE_DIR /usr/lib/llvm-20/lib/cmake/mlir)
-    # find_package(MLIR REQUIRED CONFIG)
     message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
     message(STATUS "Found MLIRConfig.cmake in:  ${MLIR_CMAKE_DIR}")
     list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
@@ -106,70 +99,71 @@ file(GLOB_RECURSE SOURCES
 add_library(catlang_lib STATIC ${SOURCES})
 
 llvm_map_components_to_libnames(LLVM_LIBS
-    Analysis
-    Core
-    ExecutionEngine
-    InstCombine
-    Object
-    OrcJIT
-    RuntimeDyld
-    ScalarOpts
-    Support
-    native
+    Analysis Core ExecutionEngine InstCombine Object OrcJIT
+    RuntimeDyld ScalarOpts Support native
 )
 list(REMOVE_DUPLICATES LLVM_LIBS)
 
-add_executable(catlang main.cpp)
-target_link_libraries(catlang PRIVATE catlang_lib ${LLVM_LIBS}
-    MLIRIR
-    MLIRParser
-    MLIRPass
-    MLIRSupport
-    MLIRExecutionEngine
-    MLIRArithDialect
-    MLIRControlFlowDialect
-    MLIRFuncDialect
-    MLIRMemRefDialect
-)
-
-if(IS_MACOS)
-    target_compile_options(catlang PRIVATE -g -O0 -fstandalone-debug)
-    target_compile_options(catlang_lib PRIVATE -g -O0 -fstandalone-debug)
-    target_link_options(catlang PRIVATE -Wl,-search_paths_first)
-elseif(IS_LINUX)
-    target_compile_options(catlang PRIVATE -g -O0 -fstandalone-debug)
-    target_compile_options(catlang_lib PRIVATE -g -O0 -fstandalone-debug)
-    target_link_options(catlang PRIVATE -rdynamic)
-endif()
-
-# Google Test
-include(FetchContent)
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.15.2
-)
-set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
-
-file(GLOB_RECURSE TEST_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
-)
-add_executable(tests ${TEST_SOURCES})
-target_link_libraries(tests PRIVATE catlang_lib gtest gtest_main pthread
-    ${LLVM_LIBS}
+set(MLIR_LIBS
     MLIRIR MLIRParser MLIRPass MLIRSupport MLIRExecutionEngine
     MLIRArithDialect MLIRControlFlowDialect MLIRFuncDialect MLIRMemRefDialect
 )
+
+add_executable(catlang main.cpp)
+target_link_libraries(catlang PRIVATE catlang_lib ${LLVM_LIBS} ${MLIR_LIBS} tinfo)
+
+target_compile_options(catlang PRIVATE -g -O0 -fstandalone-debug)
+target_compile_options(catlang_lib PRIVATE -g -O0 -fstandalone-debug)
+
+if(IS_MACOS)
+    target_link_options(catlang PRIVATE -Wl,-search_paths_first)
+elseif(IS_LINUX)
+    target_link_options(catlang PRIVATE -rdynamic)
+endif()
+
+find_package(GTest CONFIG QUIET)
+if(NOT GTest_FOUND)
+    message(STATUS "System GTest not found. Fetching from GitHub...")
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.15.2
+    )
+    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+    set(GTEST_LIBRARIES gtest gtest_main)
+else()
+    message(STATUS "Found system GTest")
+    set(GTEST_LIBRARIES GTest::gtest GTest::gtest_main)
+endif()
+
+file(GLOB_RECURSE TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
+add_executable(tests ${TEST_SOURCES})
+
+target_link_libraries(tests PRIVATE
+    catlang_lib
+    ${GTEST_LIBRARIES}
+    pthread
+    ${LLVM_LIBS}
+    ${MLIR_LIBS}
+    tinfo
+)
+
+if(IS_LINUX)
+    set_target_properties(tests PROPERTIES
+        BUILD_RPATH "/usr/lib/x86_64-linux-gnu:/usr/lib/llvm-20/lib"
+        INSTALL_RPATH "/usr/lib/x86_64-linux-gnu:/usr/lib/llvm-20/lib"
+    )
+endif()
+
 target_include_directories(tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(tests PRIVATE -g -O0 -fstandalone-debug)
-target_link_options(tests PRIVATE -Wl,-search_paths_first)
+
+if(IS_MACOS)
+    target_link_options(tests PRIVATE -Wl,-search_paths_first)
+endif()
 
 include(GoogleTest)
 gtest_discover_tests(tests)
 
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# 可选的测试目标（如果你需要，可以取消注释并根据实际情况调整）
-# set(TEST_DIR "${PROJECT_SOURCE_DIR}/test")
-# add_custom_target(test ...)

@@ -11,12 +11,13 @@ public:
 
     ReachingDefinitionAnalysis(const CFG &cfg, const FunctionAnalysisData &fdata) {
         size_t n = cfg.blocks.size();
+        size_t ndef = fdata.block_defs.size();
         gen_map.resize(n);
         kill_map.resize(n);
 
         llvm::DenseMap<const llvm::Value *, ValueSet> alloca_to_defs;
 
-        for (size_t i = 0; i < n; ++i) {
+        for (size_t i = 0; i < ndef; ++i) {
             for (auto *def : fdata.block_defs[i]) {
                 auto it = fdata.def2alloca.find(def);
                 if (it != fdata.def2alloca.end())
@@ -24,7 +25,7 @@ public:
             }
         }
 
-        for (size_t i = 0; i < n; ++i) {
+        for (size_t i = 0; i < ndef; ++i) {
             gen_map[i] = fdata.block_defs[i];
 
             for (auto *def : fdata.block_defs[i]) {

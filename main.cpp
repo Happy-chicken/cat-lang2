@@ -2,6 +2,7 @@
 #include "./src/midend/ast_optimizer/pass_manager.h"
 #include "algebraic_simplifier.h"
 #include "analysis_ctx.h"
+#include "andersen_solver.h"
 #include "block_simplifier.h"
 #include "boolean_simplifier.h"
 #include "canonicalization.h"
@@ -15,14 +16,13 @@
 #include "lexer.h"
 #include "live_variable.h"
 #include "mlir_emitter.h"
-#include "very_busy_expression.h"
-#include "reaching_definition.h"
-#include "andersen_solver.h"
 #include "parser.h"
 #include "printer.h"
+#include "reaching_definition.h"
 #include "resolver.h"
 #include "sema_checker.h"
 #include "type_checker.h"
+#include "very_busy_expression.h"
 #include <cstdlib>
 #include <iostream>
 
@@ -83,6 +83,7 @@ static void run() {
 
   cat::ir::IrEmitter emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
   emitter.compile(program);
+  emitter.dump_module(std::cout);
 
   // cat::mmlir::MlirEmitter mlir_emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
   // mlir_emitter.compile(program);
@@ -90,7 +91,10 @@ static void run() {
 
   cat::opt::ana::AnalysisCtxt analysis_ctx(emitter.get_module());
   const auto &cfgs = analysis_ctx.get_cfgs();
+
+  std::cout << "\n--- Live variables ---\n";
   for (const auto &[fn_name, cfg]: cfgs) {
+    if (cfg.blocks.empty()) continue;
     auto live_in = cat::opt::ana::compute_live_variables(cfg);
     for (auto &b: cfg.blocks) {
       for (auto *v: b.def) {
@@ -104,13 +108,52 @@ static void run() {
           std::cout << "  unused `" << v->getName().str() << "` in " << fn_name << "\n";
       }
     }
-    auto very_busy = cat::opt::ana::compute_very_busy_expressions(cfg, *analysis_ctx.get_func_data().at(fn_name));
+  }
 
-    // auto reaching_defs = cat::opt::ana::compute_reaching_definitions(cfg, *analysis_ctx.get_func_data().at(fn_name));
+  std::cout << "\n--- Very busy expressions ---\n";
+  for (const auto &[fn_name, cfg]: cfgs) {
+    if (cfg.blocks.empty()) continue;
+    auto very_busy = cat::opt::ana::compute_very_busy_expressions(cfg, *analysis_ctx.get_func_data().at(fn_name));
+    std::cout << fn_name << ":\n";
+    for (auto &b: cfg.blocks) {
+      if (b.id == cfg.exit) continue;
+      const auto &vbe = very_busy[b.id];
+      bool first = true;
+      std::string str;
+      for (auto *e: vbe) {
+        if (!e->hasName()) continue;
+        if (!first) str += ", ";
+        str += e->getName().str();
+        first = false;
+      }
+      if (!str.empty())
+        std::cout << "  block[" << b.id << "] very busy: {" << str << "}\n";
+    }
+  }
+
+  std::cout << "\n--- Reaching definitions ---\n";
+  for (const auto &[fn_name, cfg]: cfgs) {
+    if (cfg.blocks.empty()) continue;
+    auto reaching_defs = cat::opt::ana::compute_reaching_definitions(cfg, *analysis_ctx.get_func_data().at(fn_name));
+    std::cout << fn_name << ":\n";
+    for (auto &b: cfg.blocks) {
+      if (b.id == cfg.exit) continue;
+      const auto &rd = reaching_defs[b.id];
+      bool first = true;
+      std::string str;
+      for (auto *d: rd) {
+        if (!d->hasName()) continue;
+        if (!first) str += ", ";
+        str += d->getName().str();
+        first = false;
+      }
+      if (!str.empty())
+        std::cout << "  block[" << b.id << "] reaching defs: {" << str << "}\n";
+    }
   }
 
   std::cout << "\n--- Andersen points-to ---\n";
-  for (const auto &func : emitter.get_module()) {
+  for (const auto &func: emitter.get_module()) {
     if (func.getName().starts_with("llvm.")) continue;
     auto andersen = cat::opt::ana::compute_andersen(func);
     std::cout << func.getName().str() << ":\n";

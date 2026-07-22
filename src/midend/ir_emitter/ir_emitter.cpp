@@ -299,7 +299,7 @@ namespace cat::ir {
     auto &hdr = func.function_header;
 
     vector<llvm::Type *> ptypes;
-    for (auto &p : hdr.params) {
+    for (auto &p: hdr.params) {
       bool is_ref = std::get_if<ast::Type::Ref>(&p.ty.data) != nullptr;
       bool is_own = std::get_if<ast::Type::Own>(&p.ty.data) != nullptr;
       ptypes.push_back((is_ref || is_own) ? ptr_ty(c) : llvm_type(p.ty));
@@ -315,7 +315,7 @@ namespace cat::ir {
     auto saved_fn = std::exchange(current_function, fn);
     EnvGuard guard(*this, std::make_shared<Env>(env));
 
-    for (size_t i = 0; auto &arg : fn->args()) {
+    for (size_t i = 0; auto &arg: fn->args()) {
       auto &p = hdr.params[i];
       arg.setName(p.name);
       auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr, p.name);
@@ -330,9 +330,7 @@ namespace cat::ir {
         auto &own = std::get<ast::Type::Own>(p.ty.data);
         val_ty = own.inner ? llvm_type(*own.inner) : val_ty;
       }
-      env->declare_var(p.name, a, arg.getType(), val_ty,
-                       is_ref || is_own,
-                       ptr_deref_chain(p.ty));
+      env->declare_var(p.name, a, arg.getType(), val_ty, is_ref || is_own, ptr_deref_chain(p.ty));
 
       if (!is_ref && !is_own && std::get_if<ast::Type::List>(&p.ty.data)) {
         auto &list_t = std::get<ast::Type::List>(p.ty.data);
@@ -342,12 +340,12 @@ namespace cat::ir {
         auto *len_val = b.CreateExtractValue(&arg, {0u});
         auto *old_data = b.CreateExtractValue(&arg, {2u});
         auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
-            llvm::ConstantExpr::getSizeOf(et), i64(c));
+            llvm::ConstantExpr::getSizeOf(et), i64(c)
+        );
         auto *total = b.CreateMul(len_val, elem_sz);
         auto *malloc_fn = declare_runtime_func("malloc", ptr_ty(c), {i64(c)});
         auto *new_data = b.CreateCall(malloc_fn, {total}, "listcopy");
-        auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c),
-                                                {ptr_ty(c), ptr_ty(c), i64(c)});
+        auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c), {ptr_ty(c), ptr_ty(c), i64(c)});
         b.CreateCall(memcpy_fn, {new_data, old_data, total});
         b.CreateStore(new_data, b.CreateStructGEP(st, a, 2u));
       }
@@ -385,8 +383,7 @@ namespace cat::ir {
                                       : i32(*ctx->llvm_ctx);
               auto *a = ctx->builder->CreateAlloca(vt, nullptr, s.name);
               if (iv) ctx->builder->CreateStore(iv, a);
-              env->declare_var(s.name, a, vt, vt, false,
-                               s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{});
+              env->declare_var(s.name, a, vt, vt, false, s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{});
             },
             [&](const IfStmt &s) { compile_if(s); },
             [&](const LoopStmt &s) { compile_while(s); },
