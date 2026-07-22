@@ -17,6 +17,7 @@
 #include "mlir_emitter.h"
 #include "very_busy_expression.h"
 #include "reaching_definition.h"
+#include "andersen_solver.h"
 #include "parser.h"
 #include "printer.h"
 #include "resolver.h"
@@ -27,17 +28,28 @@
 
 static void run() {
   std::string source = R"(
-    def add(x: list<int>, y: int) -> int {
-      x[0] = x[0] + y;
-      return x[0] + y;
+    class Node {
+      let val: int = 0;
+      let next: int = 0;
+    }
+
+    def inc(x: ref<int>) {
+      x = x + 1;
+    }
+
+    def swap(a: ref<int>, b: ref<int>) {
+      let tmp = a;
+      a = b;
+      b = tmp;
     }
 
     def main()->int {
-      let x = [1, 2, 3];
-      let y = 20;
-      let z = 1;
-      add(x, y);
-      return x[0];
+      let a = 10;
+      let b = 20;
+      inc(a);
+      swap(a, b);
+      let n = Node(42, 7);
+      return a + n.val;
     }
   )";
 
@@ -97,16 +109,16 @@ static void run() {
     // auto reaching_defs = cat::opt::ana::compute_reaching_definitions(cfg, *analysis_ctx.get_func_data().at(fn_name));
   }
 
-  // std::cout << "\n--- Andersen points-to ---\n";
-  // for (const auto &func : emitter.get_module()) {
-  //   if (func.getName().starts_with("llvm.")) continue;
-  //   auto andersen = cat::opt::ana::compute_andersen(func);
-  //   std::cout << func.getName().str() << ":\n";
-  //   std::string s;
-  //   llvm::raw_string_ostream os(s);
-  //   andersen->dump(os);
-  //   std::cout << s;
-  // }
+  std::cout << "\n--- Andersen points-to ---\n";
+  for (const auto &func : emitter.get_module()) {
+    if (func.getName().starts_with("llvm.")) continue;
+    auto andersen = cat::opt::ana::compute_andersen(func);
+    std::cout << func.getName().str() << ":\n";
+    std::string s;
+    llvm::raw_string_ostream os(s);
+    andersen->dump(os);
+    std::cout << s;
+  }
 
   cat::jit::JIT jit(diag_ctxt);
   jit.add_symbol("malloc", reinterpret_cast<void *>(&malloc));
