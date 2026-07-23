@@ -302,7 +302,12 @@ namespace cat::ir {
     for (auto &p: hdr.params) {
       bool is_ref = std::get_if<ast::Type::Ref>(&p.ty.data) != nullptr;
       bool is_own = std::get_if<ast::Type::Own>(&p.ty.data) != nullptr;
-      ptypes.push_back((is_ref || is_own) ? ptr_ty(c) : llvm_type(p.ty));
+      if (is_own) {
+        auto &own = std::get<ast::Type::Own>(p.ty.data);
+        ptypes.push_back(own.inner ? llvm_type(*own.inner) : llvm_type(p.ty));
+      } else {
+        ptypes.push_back(is_ref ? ptr_ty(c) : llvm_type(p.ty));
+      }
     }
     auto *ret = hdr.return_type ? llvm_type(*hdr.return_type) : void_ty(c);
 
@@ -330,7 +335,7 @@ namespace cat::ir {
         auto &own = std::get<ast::Type::Own>(p.ty.data);
         val_ty = own.inner ? llvm_type(*own.inner) : val_ty;
       }
-      env->declare_var(p.name, a, arg.getType(), val_ty, is_ref || is_own, ptr_deref_chain(p.ty));
+      env->declare_var(p.name, a, arg.getType(), val_ty, is_ref, ptr_deref_chain(p.ty));
 
       if (!is_ref && !is_own && std::get_if<ast::Type::List>(&p.ty.data)) {
         auto &list_t = std::get<ast::Type::List>(p.ty.data);

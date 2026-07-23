@@ -112,3 +112,73 @@ TEST(Sema, BreakOutsideLoop) {
         def main() -> int { break; return 0; }
     )"));
 }
+
+TEST(Sema, RefTypeRequiresInit) {
+    EXPECT_FALSE(run_sema(R"(
+        def main()->int { let x: ref<int>; return 0; }
+    )"));
+}
+
+TEST(Sema, OwnTypeRequiresInit) {
+    EXPECT_FALSE(run_sema(R"(
+        def main()->int { let x: own<int>; return 0; }
+    )"));
+}
+
+TEST(Sema, UseAfterMove) {
+    EXPECT_FALSE(run_sema(R"(
+        def consume(x: own<int>) { let tmp = x; }
+        def main()->int { let a = 1; consume(a); return a; }
+    )"));
+}
+
+TEST(Sema, OwnParamCanBeUsedInsideFn) {
+    EXPECT_TRUE(run_sema(R"(
+        def take(x: own<int>) {
+            let tmp = x;
+            x = tmp + 1;
+        }
+        def main()->int {
+            let a = 1;
+            take(a);
+            return 0;
+        }
+    )"));
+}
+
+TEST(Sema, UseAfterMoveInCaller) {
+    EXPECT_FALSE(run_sema(R"(
+        def consume(x: own<int>) { let tmp = x; }
+        def main()->int { let a = 1; consume(a); return a; }
+    )"));
+}
+
+TEST(Sema, RefParamNoMove) {
+    EXPECT_TRUE(run_sema(R"(
+        def inc(x: ref<int>) { x = x + 1; }
+        def main()->int { let a = 1; inc(a); return a; }
+    )"));
+}
+
+TEST(Sema, MoveInIfBranch) {
+    EXPECT_FALSE(run_sema(R"(
+        def consume(x: own<int>) { let tmp = x; }
+        def main()->int {
+            let a = 1;
+            if a > 0 { consume(a); }
+            return a;
+        }
+    )"));
+}
+
+TEST(Sema, MoveInIfElse) {
+    EXPECT_FALSE(run_sema(R"(
+        def consume(x: own<int>) { let tmp = x; }
+        def main()->int {
+            let a = 1;
+            if a > 0 { consume(a); }
+            else { consume(a); }
+            return a;
+        }
+    )"));
+}

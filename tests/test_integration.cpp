@@ -173,3 +173,126 @@ TEST(Integration, GlobalVar) {
         def main()->int { return pi; }
     )"), 100);
 }
+
+TEST(Integration, OwnIntPassByValue) {
+    EXPECT_EQ(compile_and_run(R"(
+        def double_it(x: own<int>) -> int { return x * 2; }
+        def main()->int {
+            let a = 21;
+            return double_it(a);
+        }
+    )"), 42);
+}
+
+TEST(Integration, OwnIntLocalModification) {
+    EXPECT_EQ(compile_and_run(R"(
+        def scale(x: own<int>) -> int {
+            x = x * 3;
+            x = x + 1;
+            return x;
+        }
+        def main()->int {
+            let a = 10;
+            return scale(a);
+        }
+    )"), 31);
+}
+
+TEST(Integration, OwnMultipleParams) {
+    EXPECT_EQ(compile_and_run(R"(
+        def diff(a: own<int>, b: own<int>) -> int { return a - b; }
+        def main()->int {
+            let x = 100;
+            let y = 35;
+            return diff(x, y);
+        }
+    )"), 65);
+}
+
+TEST(Integration, OwnWithClass) {
+    EXPECT_EQ(compile_and_run(R"(
+        class Point {
+            let x: int = 0;
+            let y: int = 0;
+        }
+        def get_x(p: own<Point>) -> int { return p.x; }
+        def main()->int {
+            let pt = Point(7, 3);
+            return get_x(pt);
+        }
+    )"), 7);
+}
+
+TEST(Integration, OwnNestedCalls) {
+    EXPECT_EQ(compile_and_run(R"(
+        def add_one(x: own<int>) -> int { return x + 1; }
+        def add_two(y: own<int>) -> int { return add_one(y + 1); }
+        def main()->int {
+            let n = 10;
+            return add_two(n);
+        }
+    )"), 12);
+}
+
+TEST(Integration, OwnWithRefMixed) {
+    EXPECT_EQ(compile_and_run(R"(
+        def inc(x: ref<int>) { x = x + 1; }
+        def consume(y: own<int>) -> int { return y * 2; }
+        def main()->int {
+            let a = 5;
+            inc(a);
+            return consume(a);
+        }
+    )"), 12);
+}
+
+TEST(Integration, OwnComputeThenReturn) {
+    EXPECT_EQ(compile_and_run(R"(
+        def process(x: own<int>, y: own<int>) -> int {
+            let tmp = x + y;
+            tmp = tmp * tmp;
+            return tmp;
+        }
+        def main()->int {
+            let a = 3;
+            let b = 4;
+            return process(a, b);
+        }
+    )"), 49);
+}
+
+TEST(Integration, OwnClassFieldModify) {
+    EXPECT_EQ(compile_and_run(R"(
+        class Counter {
+            let val: int = 0;
+        }
+        def bump(c: own<Counter>) -> int {
+            c.val = c.val + 1;
+            c.val = c.val * 2;
+            return c.val;
+        }
+        def main()->int {
+            let ct = Counter(5);
+            return bump(ct);
+        }
+    )"), 12);
+}
+
+TEST(Integration, OwnChainWithClass) {
+    EXPECT_EQ(compile_and_run(R"(
+        class Box {
+            let val: int = 0;
+        }
+        def inc_box(b: own<Box>) -> int {
+            b.val = b.val + 10;
+            return b.val;
+        }
+        def wrap_inc(w: own<Box>) -> int {
+            return inc_box(w) + 1;
+        }
+        def main()->int {
+            let bx = Box(3);
+            return wrap_inc(bx);
+        }
+    )"), 14);
+}

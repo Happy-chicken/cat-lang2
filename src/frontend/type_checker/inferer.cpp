@@ -314,7 +314,12 @@ Type Inferer::infer_unary(const UnaryExpr &unary, Span span, SemaCtxt &ctxt,
         return ref->inner->clone();
       }
     }
-    diag.error(span, "Dereference requires pointer or reference type")
+    if (auto *own = std::get_if<Type::Own>(&resolved.get_data())) {
+      if (own->inner) {
+        return own->inner->clone();
+      }
+    }
+    diag.error(span, "Dereference requires pointer, reference, or ownership type")
         .note("Got: " + resolved.to_string())
         .emit_to(diag);
     return Type::error();
@@ -366,8 +371,16 @@ Type Inferer::infer_call(const CallExpr &call, Span span, SemaCtxt &ctxt,
         auto inner_expected = ref_exp->inner ? ref_exp->inner->clone() : Type::error();
         auto result = unifier.unify(resolved_arg, inner_expected);
         ok = !std::holds_alternative<error::UnifyError>(result);
+      } else if (auto *own_exp = std::get_if<Type::Own>(&resolved_expected.get_data())) {
+        auto inner_expected = own_exp->inner ? own_exp->inner->clone() : Type::error();
+        auto result = unifier.unify(resolved_arg, inner_expected);
+        ok = !std::holds_alternative<error::UnifyError>(result);
       } else if (auto *ref_arg = std::get_if<Type::Ref>(&resolved_arg.get_data())) {
         auto inner_arg = ref_arg->inner ? ref_arg->inner->clone() : Type::error();
+        auto result = unifier.unify(inner_arg, resolved_expected);
+        ok = !std::holds_alternative<error::UnifyError>(result);
+      } else if (auto *own_arg = std::get_if<Type::Own>(&resolved_arg.get_data())) {
+        auto inner_arg = own_arg->inner ? own_arg->inner->clone() : Type::error();
         auto result = unifier.unify(inner_arg, resolved_expected);
         ok = !std::holds_alternative<error::UnifyError>(result);
       } else {

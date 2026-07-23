@@ -119,6 +119,14 @@ namespace cat {
     std::visit(
         overloaded{
             [&](const VarDefStmt &var_def) {
+              if (var_def.ty.has_value()) {
+                bool is_ref = std::get_if<ast::Type::Ref>(&var_def.ty->data) != nullptr;
+                bool is_own = std::get_if<ast::Type::Own>(&var_def.ty->data) != nullptr;
+                if ((is_ref || is_own) && !var_def.init.has_value()) {
+                  diag.error(span, "Variable '" + var_def.name + "' of reference or ownership type must be initialized")
+                      .emit_to(diag);
+                }
+              }
               if (var_def.init.has_value()) {
                 check_expr(*var_def.init, var_def.init->span, ctx, diag);
               }
