@@ -17,7 +17,8 @@ namespace cat::ir {
     llvm::Value *ptr;
     llvm::Type  *alloca_ty;
     llvm::Type  *value_ty;
-    bool         indirect = false;
+    bool         is_ref = false;
+    bool         is_own = false;
     vector<llvm::Type *> deref_chain;
   };
 

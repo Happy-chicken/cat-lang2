@@ -119,10 +119,12 @@ namespace cat {
     std::visit(
         overloaded{
             [&](const VarDefStmt &var_def) {
+              bool var_is_ref = false;
+              bool var_is_own = false;
               if (var_def.ty.has_value()) {
-                bool is_ref = std::get_if<ast::Type::Ref>(&var_def.ty->data) != nullptr;
-                bool is_own = std::get_if<ast::Type::Own>(&var_def.ty->data) != nullptr;
-                if ((is_ref || is_own) && !var_def.init.has_value()) {
+                var_is_ref = std::get_if<ast::Type::Ref>(&var_def.ty->data) != nullptr;
+                var_is_own = std::get_if<ast::Type::Own>(&var_def.ty->data) != nullptr;
+                if ((var_is_ref || var_is_own) && !var_def.init.has_value()) {
                   diag.error(span, "Variable '" + var_def.name + "' of reference or ownership type must be initialized")
                       .emit_to(diag);
                 }
@@ -151,7 +153,7 @@ namespace cat {
                   }
                 }
               }
-              auto sym = Symbol::new_variable(var_def.name, var_ty ? std::move(*var_ty) : ast::Type{}, false, span, list_len);
+              auto sym = Symbol::new_variable(var_def.name, var_ty ? std::move(*var_ty) : ast::Type{}, false, span, var_is_ref, var_is_own, list_len);
               auto existing = ctx.get_symbol_table().declare(std::move(sym));
               if (existing) {
                 diag.error(span, "Variable '" + var_def.name + "' is already declared in this scope")

@@ -110,7 +110,11 @@ set(MLIR_LIBS
 )
 
 add_executable(catlang main.cpp)
-target_link_libraries(catlang PRIVATE catlang_lib ${LLVM_LIBS} ${MLIR_LIBS} tinfo)
+if(IS_MACOS)
+    target_link_libraries(catlang PRIVATE catlang_lib ${LLVM_LIBS} ${MLIR_LIBS} ncurses)
+elseif(IS_LINUX)
+    target_link_libraries(catlang PRIVATE catlang_lib ${LLVM_LIBS} ${MLIR_LIBS} tinfo)
+endif()
 
 target_compile_options(catlang PRIVATE -g -O0 -fstandalone-debug)
 target_compile_options(catlang_lib PRIVATE -g -O0 -fstandalone-debug)
@@ -140,15 +144,25 @@ endif()
 
 file(GLOB_RECURSE TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
 add_executable(tests ${TEST_SOURCES})
-
-target_link_libraries(tests PRIVATE
-    catlang_lib
-    ${GTEST_LIBRARIES}
-    pthread
-    ${LLVM_LIBS}
-    ${MLIR_LIBS}
-    tinfo
-)
+if (IS_MACOS)
+    target_link_libraries(tests PRIVATE
+        catlang_lib
+        ${GTEST_LIBRARIES}
+        pthread
+        ${LLVM_LIBS}
+        ${MLIR_LIBS}
+        ncurses
+    )
+elseif(IS_LINUX)
+    target_link_libraries(tests PRIVATE
+        catlang_lib
+        ${GTEST_LIBRARIES}
+        pthread
+        ${LLVM_LIBS}
+        ${MLIR_LIBS}
+        tinfo
+    )
+endif()
 
 if(IS_LINUX)
     set_target_properties(tests PROPERTIES

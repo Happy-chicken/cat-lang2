@@ -10,6 +10,8 @@ namespace cat {
   struct VariableData {
     bool is_mutable;
     bool is_initialized;
+    bool is_ref = false;
+    bool is_own = false;
     optional<size_t> known_list_len;
   };
 
@@ -46,7 +48,7 @@ public:
     Symbol(Symbol &&) = default;
     Symbol &operator=(Symbol &&) = default;
 
-    static Symbol new_variable(string name, optional<ast::Type> ty, bool is_mutable, Span span, optional<size_t> list_len = std::nullopt);
+    static Symbol new_variable(string name, optional<ast::Type> ty, bool is_mutable, Span span, bool is_ref = false, bool is_own = false, optional<size_t> list_len = std::nullopt);
 
     static Symbol new_function(string name, vector<ast::Type> params, ast::Type return_type, Span span);
 
@@ -72,12 +74,18 @@ public:
       if (auto *param = std::get_if<ParameterData>(&kind)) {
         return param->is_ref;
       }
+      if (auto *var = std::get_if<VariableData>(&kind)) {
+        return var->is_ref;
+      }
       return false;
     }
 
     bool is_own() const {
       if (auto *param = std::get_if<ParameterData>(&kind)) {
         return param->is_own;
+      }
+      if (auto *var = std::get_if<VariableData>(&kind)) {
+        return var->is_own;
       }
       return false;
     }

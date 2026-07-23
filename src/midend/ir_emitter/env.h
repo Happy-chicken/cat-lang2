@@ -13,9 +13,10 @@ namespace cat::ir {
 
     void declare_var(const string &name, llvm::Value *ptr,
                       llvm::Type *alloca_ty, llvm::Type *value_ty,
-                      bool indirect = false,
-                      vector<llvm::Type *> deref_chain = {}) {
-      locals[name] = VarInfo{ptr, alloca_ty, value_ty, indirect, std::move(deref_chain)};
+                      bool is_ref = false,
+                      vector<llvm::Type *> deref_chain = {},
+                      bool is_own = false) {
+      locals[name] = VarInfo{ptr, alloca_ty, value_ty, is_ref, is_own, std::move(deref_chain)};
     }
 
     VarInfo lookup_var(const string &name) const {

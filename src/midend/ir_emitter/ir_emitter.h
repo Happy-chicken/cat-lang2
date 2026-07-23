@@ -73,6 +73,9 @@ private:
     vector<llvm::Type *> ptr_deref_chain(const ast::Type &ast_type);
     llvm::Function *declare_runtime_func(const string &name, llvm::Type *ret_ty, vector<llvm::Type *> param_tys, bool is_var_arg = false);
 
+    vector<llvm::Value *> compile_args(llvm::Function *fn, const vector<uptr<ExprNode>> &args, size_t param_offset, const ClassInfo *ctor_info = nullptr);
+    void invalidate_owned_args(const string &fn_name, const vector<uptr<ExprNode>> &args, size_t param_offset);
+
 private:
     uptr<CodeGenCtxt> ctx;
     sptr<Env> env;

@@ -28,29 +28,14 @@
 
 static void run() {
   std::string source = R"(
-    class Node {
-      let val: int = 0;
-      let next: int = 0;
-    }
-
-    def inc(x: ref<int>) {
-      x = x + 1;
-    }
-
-    def swap(a: ref<int>, b: ref<int>) {
-      let tmp = a;
-      a = b;
-      b = tmp;
-    }
-
-    def main()->int {
-      let a = 10;
-      let b = 20;
-      inc(a);
-      swap(a, b);
-      let n = Node(42, 7);
-      return a + n.val;
-    }
+    def diff(a: ref<int>, b: own<ptr<int>>) -> int { return a - *b; }
+        def main()->int {
+            let x = 100;
+            let y = 35;
+            let a = &y;
+            let d = diff(x, a);
+            return *a;
+        }
   )";
 
   cat::File file("foo.cat", source);
@@ -70,6 +55,7 @@ static void run() {
 
   if (diag_ctxt.has_errors()) {
     diag_ctxt.print_all(std::cerr);
+    return;
   }
 
   cat::opt::ast::PassManager ast_opt_pm;

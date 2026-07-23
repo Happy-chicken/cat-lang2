@@ -8,15 +8,16 @@ static bool is_terminal(Terminator term) {
   return term == Terminator::Returns || term == Terminator::Diverges;
 }
 
-void FlowChecker::check_function_returns(const Block &block,
+void FlowChecker::check_function_returns(const FunctionDef &func,
                                          const ast::Type &return_type,
                                          error::DiagCtxt &diag) {
-  std::set<std::string> moved;
-  auto term = analyze_block(block, diag, moved);
+  moved.clear();
+  auto term = analyze_block(func.body, diag);
+
   if (std::holds_alternative<ast::Type::Void>(return_type.data))
     return;
   if (term != Terminator::Returns) {
-    auto span = block.stmts.empty() ? Span{0, 0} : block.stmts.back().span;
+    auto span = func.body.stmts.empty() ? Span{0, 0} : func.body.stmts.back().span;
     diag.error(span,
                "Function with non-void return type must return a value "
                "on all paths")
@@ -25,11 +26,10 @@ void FlowChecker::check_function_returns(const Block &block,
 }
 
 Terminator FlowChecker::analyze_block(const Block &block,
-                                      error::DiagCtxt &diag,
-                                      std::set<std::string> &moved) {
+                                      error::DiagCtxt &diag) {
   Terminator term = Terminator::FallsThrough;
   for (size_t i = 0; i < block.stmts.size(); ++i) {
-    term = analyze_stmt(block.stmts[i], diag, moved);
+    term = analyze_stmt(block.stmts[i], diag);
     if (is_terminal(term)) {
       if (i + 1 < block.stmts.size()) {
         diag.warn("Unreachable code")
@@ -43,45 +43,44 @@ Terminator FlowChecker::analyze_block(const Block &block,
 }
 
 Terminator FlowChecker::analyze_stmt(const StmtNode &stmt,
-                                     error::DiagCtxt &diag,
-                                     std::set<std::string> &moved) {
+                                     error::DiagCtxt &diag) {
   return std::visit(
       overloaded{
           [&](const ReturnStmt &s) {
-            if (s.expr.has_value()) {
-              check_expr_for_moved(*s.expr, moved, diag);
-              mark_own_args(*s.expr, moved, diag);
-            }
+            if (s.expr.has_value())
+              check_expr(*s.expr, diag);
             return Terminator::Returns;
           },
           [&](const LoopStmt &loop_stmt) {
-            std::set<std::string> body_moved = moved;
-            check_expr_for_moved(loop_stmt.condition, body_moved, diag);
-            mark_own_args(loop_stmt.condition, body_moved, diag);
-            auto term = analyze_block(*loop_stmt.body, diag, body_moved);
-            for (auto &v: body_moved) moved.insert(v);
+            auto saved = moved;
+            check_expr(loop_stmt.condition, diag);
+            auto body_start = moved;
+            auto term = analyze_block(*loop_stmt.body, diag);
+            for (auto &v: moved) body_start.insert(v);
+            for (auto &v: body_start) saved.insert(v);
+            moved = std::move(saved);
             if (term == Terminator::Returns)
               return Terminator::Returns;
             return Terminator::FallsThrough;
           },
           [&](const IfStmt &if_stmt) {
-            return analyze_if_stmt(if_stmt, diag, moved);
+            return analyze_if_stmt(if_stmt, diag);
           },
           [&](const ContinueStmt &) { return Terminator::Diverges; },
           [&](const BreakStmt &) { return Terminator::Diverges; },
           [&](const BlockStmt &block_stmt) {
-            return analyze_block(*block_stmt.block, diag, moved);
+            return analyze_block(*block_stmt.block, diag);
           },
           [&](const ExprStmt &es) {
-            check_expr_for_moved(es.expr, moved, diag);
-            mark_own_args(es.expr, moved, diag);
+            check_expr(es.expr, diag);
             return Terminator::FallsThrough;
           },
           [&](const VarDefStmt &vds) {
-            if (vds.init.has_value()) {
-              check_expr_for_moved(*vds.init, moved, diag);
-              mark_own_args(*vds.init, moved, diag);
-            }
+            if (vds.init.has_value())
+              check_expr(*vds.init, diag);
+            if (vds.ty && std::get_if<ast::Type::Own>(&vds.ty->data))
+              if (auto *var = std::get_if<Variable>(&vds.init->expr))
+                moved.insert(var->name);
             return Terminator::FallsThrough;
           },
           [&](const auto &) { return Terminator::FallsThrough; },
@@ -90,43 +89,40 @@ Terminator FlowChecker::analyze_stmt(const StmtNode &stmt,
 }
 
 Terminator FlowChecker::analyze_if_stmt(const IfStmt &if_stmt,
-                                        error::DiagCtxt &diag,
-                                        std::set<std::string> &moved) {
-  check_expr_for_moved(if_stmt.condition, moved, diag);
-  mark_own_args(if_stmt.condition, moved, diag);
+                                        error::DiagCtxt &diag) {
+  check_expr(if_stmt.condition, diag);
 
-  std::set<std::string> then_moved = moved;
-  auto then_term = analyze_block(*if_stmt.then_branch, diag, then_moved);
+  auto saved = moved;
+
+  moved = saved;
+  auto then_term = analyze_block(*if_stmt.then_branch, diag);
+  auto then_moved = std::move(moved);
 
   std::vector<Terminator> elif_terms;
-  std::vector<std::set<std::string>> elif_moved_sets;
+  std::vector<decltype(moved)> elif_moved;
   for (const auto &[cond, block] : if_stmt.elif_branch) {
-    std::set<std::string> el_moved = moved;
-    check_expr_for_moved(cond, el_moved, diag);
-    mark_own_args(cond, el_moved, diag);
-    elif_terms.push_back(analyze_block(*block, diag, el_moved));
-    elif_moved_sets.push_back(std::move(el_moved));
+    moved = saved;
+    check_expr(cond, diag);
+    elif_terms.push_back(analyze_block(*block, diag));
+    elif_moved.push_back(std::move(moved));
   }
 
-  bool has_else = if_stmt.else_branch != nullptr;
-  std::set<std::string> else_moved = moved;
+  moved = saved;
   auto else_term = Terminator::FallsThrough;
-  if (has_else) {
-    else_term = analyze_block(*if_stmt.else_branch, diag, else_moved);
-  }
+  if (if_stmt.else_branch)
+    else_term = analyze_block(*if_stmt.else_branch, diag);
+  auto else_moved = std::move(moved);
 
   moved = std::move(then_moved);
-  for (auto &em: elif_moved_sets)
+  for (auto &em: elif_moved)
     for (auto &v: em) moved.insert(v);
   for (auto &v: else_moved) moved.insert(v);
 
+  bool has_else = if_stmt.else_branch != nullptr;
   bool all_return = (then_term == Terminator::Returns) &&
                     std::all_of(elif_terms.begin(), elif_terms.end(),
-                                [](Terminator t) {
-                                  return t == Terminator::Returns;
-                                }) &&
+                                [](Terminator t) { return t == Terminator::Returns; }) &&
                     (!has_else || else_term == Terminator::Returns);
-
   if (all_return && has_else)
     return Terminator::Returns;
 
@@ -135,67 +131,25 @@ Terminator FlowChecker::analyze_if_stmt(const IfStmt &if_stmt,
       std::all_of(elif_terms.begin(), elif_terms.end(),
                   [](Terminator t) { return t == Terminator::Diverges; }) &&
       (!has_else || else_term == Terminator::Diverges);
-
   if (all_diverge && has_else)
     return Terminator::Diverges;
 
   return Terminator::FallsThrough;
 }
 
-void FlowChecker::collect_variable_names(const ExprNode &expr, std::vector<std::string> &names) {
+void FlowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag) {
   std::visit(
       overloaded{
-          [&](const Variable &v) { names.push_back(v.name); },
-          [&](const BinaryExpr &b) {
-            collect_variable_names(*b.lhs, names);
-            collect_variable_names(*b.rhs, names);
+          [&](const Variable &v) {
+            if (moved.count(v.name))
+              diag.error(expr.span, "Variable '" + v.name + "' was moved and cannot be used here")
+                  .emit_to(diag);
           },
-          [&](const UnaryExpr &u) { collect_variable_names(*u.expr, names); },
-          [&](const AssignExpr &a) {
-            collect_variable_names(*a.target, names);
-            collect_variable_names(*a.value, names);
-          },
-          [&](const CallExpr &c) {
-            collect_variable_names(*c.callee, names);
-            for (auto &arg: c.args)
-              collect_variable_names(*arg, names);
-          },
-          [&](const MemberExpr &m) { collect_variable_names(*m.object, names); },
-          [&](const IndexExpr &i) {
-            collect_variable_names(*i.object, names);
-            collect_variable_names(*i.index, names);
-          },
-          [&](const auto &) {},
-      },
-      expr.expr);
-}
-
-void FlowChecker::check_expr_for_moved(const ExprNode &expr,
-                                       const std::set<std::string> &moved,
-                                       error::DiagCtxt &diag) {
-  if (moved.empty()) return;
-  std::vector<std::string> names;
-  collect_variable_names(expr, names);
-  for (auto &name: names) {
-    if (moved.count(name)) {
-      diag.error(expr.span, "Variable '" + name + "' was moved and cannot be used here")
-          .emit_to(diag);
-    }
-  }
-}
-
-static bool param_type_is_own(const ast::Type &ty) {
-  return std::get_if<ast::Type::Own>(&ty.data) != nullptr;
-}
-
-void FlowChecker::mark_own_args(const ExprNode &expr,
-                                std::set<std::string> &moved,
-                                error::DiagCtxt &diag) {
-  if (!sema_ctx) return;
-
-  std::visit(
-      overloaded{
           [&](const CallExpr &call) {
+            check_expr(*call.callee, diag);
+            for (auto &arg: call.args)
+              check_expr(*arg, diag);
+
             auto fn_name = std::visit(
                 overloaded{
                     [](const Variable &v) -> std::string { return v.name; },
@@ -210,35 +164,31 @@ void FlowChecker::mark_own_args(const ExprNode &expr,
 
             if (fn_name.empty()) return;
 
-            auto *sym = sema_ctx->get_symbol_table().resolve(fn_name);
-            if (!sym) return;
+            auto *fn_sym = sym_table->resolve(fn_name);
+            if (!fn_sym) return;
 
-            auto *fn_data = std::get_if<FunctionData>(&sym->get_kind());
+            auto *fn_data = std::get_if<FunctionData>(&fn_sym->get_kind());
             if (!fn_data) return;
 
             for (size_t i = 0; i < fn_data->params.size() && i < call.args.size(); ++i) {
-              if (!param_type_is_own(fn_data->params[i])) continue;
-              if (auto *var = std::get_if<Variable>(&call.args[i]->expr)) {
+              if (!std::get_if<ast::Type::Own>(&fn_data->params[i].data)) continue;
+              if (auto *var = std::get_if<Variable>(&call.args[i]->expr))
                 moved.insert(var->name);
-              }
             }
-
-            for (auto &arg: call.args)
-              mark_own_args(*arg, moved, diag);
+          },
+          [&](const AssignExpr &a) {
+            check_expr(*a.target, diag);
+            check_expr(*a.value, diag);
           },
           [&](const BinaryExpr &b) {
-            mark_own_args(*b.lhs, moved, diag);
-            mark_own_args(*b.rhs, moved, diag);
+            check_expr(*b.lhs, diag);
+            check_expr(*b.rhs, diag);
           },
-          [&](const UnaryExpr &u) { mark_own_args(*u.expr, moved, diag); },
-          [&](const AssignExpr &a) {
-            mark_own_args(*a.target, moved, diag);
-            mark_own_args(*a.value, moved, diag);
-          },
-          [&](const MemberExpr &m) { mark_own_args(*m.object, moved, diag); },
+          [&](const UnaryExpr &u) { check_expr(*u.expr, diag); },
+          [&](const MemberExpr &m) { check_expr(*m.object, diag); },
           [&](const IndexExpr &i) {
-            mark_own_args(*i.object, moved, diag);
-            mark_own_args(*i.index, moved, diag);
+            check_expr(*i.object, diag);
+            check_expr(*i.index, diag);
           },
           [&](const auto &) {},
       },

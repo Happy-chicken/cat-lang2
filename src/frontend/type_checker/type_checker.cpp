@@ -106,32 +106,10 @@ namespace cat::semantics {
                     ctx.get_type_ctxt().resolve_type(inferred)
                 );
               }
-              if (auto ref_ty = std::get_if<ast::Type::Ref>(&stored_type->data)) {
-                if (auto inner_ref = std::get_if<ast::Type::Ref>(&ref_ty->inner->data) != nullptr) {
-                  diag.error(span, "Cannot have a reference to a reference")
-                      .emit_to(diag);
-                  return;
-                }
-                if (auto inner_own = std::get_if<ast::Type::Own>(&ref_ty->inner->data) != nullptr) {
-                  diag.error(span, "Cannot have a reference to an owned type")
-                      .emit_to(diag);
-                  return;
-                }
-              }
-              if (auto own_ty = std::get_if<ast::Type::Own>(&stored_type->data)) {
-                if (auto inner_ref = std::get_if<ast::Type::Ref>(&own_ty->inner->data) != nullptr) {
-                  diag.error(span, "Cannot have ownership of a reference")
-                      .emit_to(diag);
-                  return;
-                }
-                if (auto inner_own = std::get_if<ast::Type::Own>(&own_ty->inner->data) != nullptr) {
-                  diag.error(span, "Cannot have ownership of an owned type")
-                      .emit_to(diag);
-                  return;
-                }
-              }
+              bool var_is_ref = std::get_if<ast::Type::Ref>(&stored_type->data) != nullptr;
+              bool var_is_own = std::get_if<ast::Type::Own>(&stored_type->data) != nullptr;
               Symbol var_sym = Symbol::new_variable(
-                  var_def.name, std::move(stored_type), false, span
+                  var_def.name, std::move(stored_type), false, span, var_is_ref, var_is_own
               );
               ctx.get_symbol_table().declare(std::move(var_sym));
             },

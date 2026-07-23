@@ -335,7 +335,7 @@ namespace cat::ir {
         auto &own = std::get<ast::Type::Own>(p.ty.data);
         val_ty = own.inner ? llvm_type(*own.inner) : val_ty;
       }
-      env->declare_var(p.name, a, arg.getType(), val_ty, is_ref, ptr_deref_chain(p.ty));
+      env->declare_var(p.name, a, arg.getType(), val_ty, is_ref, ptr_deref_chain(p.ty), is_own);
 
       if (!is_ref && !is_own && std::get_if<ast::Type::List>(&p.ty.data)) {
         auto &list_t = std::get<ast::Type::List>(p.ty.data);
@@ -388,7 +388,16 @@ namespace cat::ir {
                                       : i32(*ctx->llvm_ctx);
               auto *a = ctx->builder->CreateAlloca(vt, nullptr, s.name);
               if (iv) ctx->builder->CreateStore(iv, a);
-              env->declare_var(s.name, a, vt, vt, false, s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{});
+
+              bool is_ref = s.ty && std::get_if<ast::Type::Ref>(&s.ty->data);
+              bool is_own = s.ty && std::get_if<ast::Type::Own>(&s.ty->data);
+              env->declare_var(s.name, a, vt, vt, is_ref, s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{}, is_own);
+
+              if (s.ty && std::get_if<ast::Type::Own>(&s.ty->data)) {
+                if (auto *var = std::get_if<Variable>(&s.init->expr))
+                  if (auto vi = env->lookup_var(var->name); vi.ptr)
+                    ctx->builder->CreateStore(llvm::UndefValue::get(vi.alloca_ty), vi.ptr);
+              }
             },
             [&](const IfStmt &s) { compile_if(s); },
             [&](const LoopStmt &s) { compile_while(s); },
@@ -514,7 +523,7 @@ namespace cat::ir {
                 return llvm::Constant::getNullValue(i32(*ctx->llvm_ctx));
               }
               auto *val = ctx->builder->CreateLoad(v.alloca_ty, v.ptr, e.name);
-              if (v.indirect)
+              if (v.is_ref)
                 val = ctx->builder->CreateLoad(v.value_ty, val);
               return val;
             },
@@ -590,7 +599,7 @@ namespace cat::ir {
             overload{
                 [&](const Variable &var) -> llvm::Value * {
                   auto vi = env->lookup_var(var.name);
-                  if (vi.indirect)
+                  if (vi.is_ref)
                     return ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
                   return vi.ptr;
                 },
@@ -687,42 +696,24 @@ namespace cat::ir {
                 diag.error(span, "Undefined function: " + callee.name).emit_to(diag);
                 return nullptr;
               }
-              vector<llvm::Value *> args;
-              size_t expected = fn->getFunctionType()->getNumParams();
+
+              ClassInfo *ctor_info = nullptr;
               if (is_ctor) {
                 auto it = ctx->class_registry.find(callee.name);
-                if (it != ctx->class_registry.end()) {
-                  auto &info = *it->second;
-                  for (size_t i = 0; i < expected; ++i) {
-                    if (i < call.args.size()) {
-                      args.push_back(compile_expr(*call.args[i]));
-                    } else if (i < info.field_defaults.size() && info.field_defaults[i]) {
-                      args.push_back(compile_expr(**info.field_defaults[i]));
-                    } else {
-                      args.push_back(zero_const(fn->getFunctionType()->getParamType(static_cast<unsigned>(i))));
-                    }
-                  }
-                } else {
-                  args.push_back(zero_const(fn->getFunctionType()->getReturnType()));
-                }
-              } else {
-                for (size_t i = 0; i < call.args.size() && i < expected; ++i) {
-                  auto *arg_val = compile_expr(*call.args[i]);
-                  if (fn->getFunctionType()->getParamType(static_cast<unsigned>(i))->isPointerTy() &&
-                      arg_val && !arg_val->getType()->isPointerTy()) {
-                    if (auto *var = std::get_if<Variable>(&call.args[i]->expr)) {
-                      auto vi = env->lookup_var(var->name);
-                      if (vi.ptr) arg_val = vi.ptr;
-                    }
-                  }
-                  args.push_back(arg_val);
-                }
+                if (it != ctx->class_registry.end()) ctor_info = it->second.get();
               }
-              return ctx->builder->CreateCall(fn, args);
+
+              auto args = compile_args(fn, call.args, 0, ctor_info);
+
+              auto *call_inst = ctx->builder->CreateCall(fn, args);
+              if (!is_ctor)
+                invalidate_owned_args(callee.name, call.args, 0);
+              return call_inst;
             },
             [&](const MemberExpr &callee) -> llvm::Value * {
               auto *self = compile_expr(*callee.object);
               if (!self) return nullptr;
+
               string mangled = callee.field;
               for (auto &kv: ctx->class_registry) {
                 auto it = kv.second->methods.find(callee.field);
@@ -736,20 +727,22 @@ namespace cat::ir {
                 diag.error(span, "Undefined method: " + mangled).emit_to(diag);
                 return nullptr;
               }
-              vector<llvm::Value *> args{self};
-              size_t expected = fn->getFunctionType()->getNumParams();
-              for (size_t i = 0; i < call.args.size() && (i + 1) < expected; ++i) {
-                auto *arg_val = compile_expr(*call.args[i]);
-                if (fn->getFunctionType()->getParamType(static_cast<unsigned>(i + 1))->isPointerTy() &&
-                    arg_val && !arg_val->getType()->isPointerTy()) {
-                  if (auto *var = std::get_if<Variable>(&call.args[i]->expr)) {
-                    auto vi = env->lookup_var(var->name);
-                    if (vi.ptr) arg_val = vi.ptr;
-                  }
-                }
-                args.push_back(arg_val);
+
+              auto args = compile_args(fn, call.args, 1);
+              args.insert(args.begin(), self);
+
+              auto *call_inst = ctx->builder->CreateCall(fn, args);
+
+              if (auto *obj_var = std::get_if<Variable>(&callee.object->expr)) {
+                auto *fn_sym = sema.get_symbol_table().resolve(mangled);
+                auto *fn_data = fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind()) : nullptr;
+                if (fn_data && fn_data->params.size() > 0 &&
+                    std::get_if<ast::Type::Own>(&fn_data->params[0].data))
+                  if (auto vi = env->lookup_var(obj_var->name); vi.ptr)
+                    ctx->builder->CreateStore(llvm::UndefValue::get(vi.alloca_ty), vi.ptr);
               }
-              return ctx->builder->CreateCall(fn, args);
+              invalidate_owned_args(mangled, call.args, 1);
+              return call_inst;
             },
             [&](const auto &) -> llvm::Value * {
               diag.error(span, "Invalid call expression").emit_to(diag);
@@ -760,6 +753,41 @@ namespace cat::ir {
     );
   }
 
+  vector<llvm::Value *> IrEmitter::compile_args(llvm::Function *fn, const vector<uptr<ExprNode>> &args, size_t param_offset, const ClassInfo *ctor_info) {
+    vector<llvm::Value *> out;
+    size_t total = ctor_info ? fn->getFunctionType()->getNumParams()
+                             : args.size();
+    for (size_t i = 0; i + param_offset < fn->getFunctionType()->getNumParams() && i < total; ++i) {
+      if (ctor_info && i >= args.size()) {
+        if (i < ctor_info->field_defaults.size() && ctor_info->field_defaults[i])
+          out.push_back(compile_expr(**ctor_info->field_defaults[i]));
+        else
+          out.push_back(zero_const(fn->getFunctionType()->getParamType(static_cast<unsigned>(i + param_offset))));
+        continue;
+      }
+      auto *arg_val = compile_expr(*args[i]);
+      auto *param_ty = fn->getFunctionType()->getParamType(static_cast<unsigned>(i + param_offset));
+      if (param_ty->isPointerTy() && arg_val && !arg_val->getType()->isPointerTy())
+        if (auto *var = std::get_if<Variable>(&args[i]->expr))
+          if (auto vi = env->lookup_var(var->name); vi.ptr)
+            arg_val = vi.ptr;
+      out.push_back(arg_val);
+    }
+    return out;
+  }
+
+  void IrEmitter::invalidate_owned_args(const string &fn_name, const vector<uptr<ExprNode>> &args, size_t param_offset) {
+    auto *fn_sym = sema.get_symbol_table().resolve(fn_name);
+    auto *fn_data = fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind()) : nullptr;
+    if (!fn_data) return;
+    for (size_t i = 0; i < args.size() && (i + param_offset) < fn_data->params.size(); ++i) {
+      if (!std::get_if<ast::Type::Own>(&fn_data->params[i + param_offset].data)) continue;
+      if (auto *var = std::get_if<Variable>(&args[i]->expr))
+        if (auto vi = env->lookup_var(var->name); vi.ptr)
+          ctx->builder->CreateStore(llvm::UndefValue::get(vi.alloca_ty), vi.ptr);
+    }
+  }
+
   llvm::Value *IrEmitter::compile_assignment(const AssignExpr &a) {
     auto *val = compile_expr(*a.value);
     if (!val) return nullptr;
@@ -768,12 +796,16 @@ namespace cat::ir {
             [&](const Variable &t) {
               auto vi = env->lookup_var(t.name);
               if (!vi.ptr) return;
-              if (vi.indirect) {
+              if (vi.is_ref) {
                 auto *dst = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
                 ctx->builder->CreateStore(val, dst);
               } else {
                 ctx->builder->CreateStore(val, vi.ptr);
               }
+              if (vi.is_own)
+                if (auto *src_var = std::get_if<Variable>(&a.value->expr))
+                  if (auto sv = env->lookup_var(src_var->name); sv.ptr)
+                    ctx->builder->CreateStore(llvm::UndefValue::get(sv.alloca_ty), sv.ptr);
             },
             [&](const MemberExpr &) {
               if (auto *p = compile_member_ptr(*a.target))
