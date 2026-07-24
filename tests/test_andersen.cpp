@@ -63,10 +63,10 @@ struct AndersenFixture : ::testing::Test {
 
 TEST_F(AndersenFixture, RefParamPointsTo) {
   compile(R"(
-    def inc(x: ref<int>) {
+    fn inc(x: ref<int>) {
       x = x + 1;
     }
-    def main()->int {
+    fn main()->int {
       let a = 10;
       inc(a);
       return a;
@@ -94,12 +94,12 @@ TEST_F(AndersenFixture, RefParamPointsTo) {
 
 TEST_F(AndersenFixture, SwapRefParams) {
   compile(R"(
-    def swap(a: ref<int>, b: ref<int>) {
+    fn swap(a: ref<int>, b: ref<int>) {
       let tmp = a;
       a = b;
       b = tmp;
     }
-    def main()->int {
+    fn main()->int {
       let x = 10;
       let y = 20;
       swap(x, y);
@@ -126,7 +126,7 @@ TEST_F(AndersenFixture, ClassFieldStore) {
       let val: int = 0;
       let next: int = 0;
     }
-    def main()->int {
+    fn main()->int {
       let n = Node(42, 7);
       return n.val;
     }
@@ -150,7 +150,7 @@ TEST_F(AndersenFixture, ClassFieldStore) {
 
 TEST_F(AndersenFixture, NoAliasUnrelatedVars) {
   compile(R"(
-    def main()->int {
+    fn main()->int {
       let a = 1;
       let b = 2;
       let c = a + b;
@@ -173,10 +173,10 @@ TEST_F(AndersenFixture, NoAliasUnrelatedVars) {
 
 TEST_F(AndersenFixture, MultipleRefCalls) {
   compile(R"(
-    def set_val(p: ref<int>, v: int) {
+    fn set_val(p: ref<int>, v: int) {
       p = v;
     }
-    def main()->int {
+    fn main()->int {
       let a = 0;
       let b = 0;
       set_val(a, 10);
@@ -200,14 +200,14 @@ TEST_F(AndersenFixture, MultipleRefCalls) {
 
 TEST_F(AndersenFixture, NestedRefFunctions) {
   compile(R"(
-    def inc(x: ref<int>) {
+    fn inc(x: ref<int>) {
       x = x + 1;
     }
-    def double_inc(y: ref<int>) {
+    fn double_inc(y: ref<int>) {
       inc(y);
       inc(y);
     }
-    def main()->int {
+    fn main()->int {
       let a = 5;
       double_inc(a);
       return a;

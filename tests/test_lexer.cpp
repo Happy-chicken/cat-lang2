@@ -28,9 +28,9 @@ TEST(Lexer, Empty) {
 }
 
 TEST(Lexer, Keywords) {
-    auto kinds = tokenize_kinds("def let return if else elif while break continue");
+    auto kinds = tokenize_kinds("fn let return if else elif while break continue");
     ASSERT_GE(kinds.size(), 9u);
-    EXPECT_EQ(kinds[0], TokenKind::Def);
+    EXPECT_EQ(kinds[0], TokenKind::Fn);
     EXPECT_EQ(kinds[1], TokenKind::Let);
     EXPECT_EQ(kinds[2], TokenKind::Return);
     EXPECT_EQ(kinds[3], TokenKind::If);

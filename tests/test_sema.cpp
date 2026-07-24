@@ -32,74 +32,74 @@ static auto run_sema(const string &source, bool expect_ok = true) {
 
 TEST(Sema, ValidFunction) {
     EXPECT_TRUE(run_sema(R"(
-        def add(x: int, y: int) -> int { return x + y; }
-        def main() -> int { return add(1, 2); }
+        fn add(x: int, y: int) -> int { return x + y; }
+        fn main() -> int { return add(1, 2); }
     )"));
 }
 
 TEST(Sema, ValidRefParam) {
     EXPECT_TRUE(run_sema(R"(
-        def inc(x: ref<int>) { x = x + 1; }
-        def main() -> int { let a = 10; inc(a); return a; }
+        fn inc(x: ref<int>) { x = x + 1; }
+        fn main() -> int { let a = 10; inc(a); return a; }
     )"));
 }
 
 TEST(Sema, UndefinedVariable) {
     EXPECT_FALSE(run_sema(R"(
-        def main() -> int { return x; }
+        fn main() -> int { return x; }
     )"));
 }
 
 TEST(Sema, ArgCountMismatch) {
     EXPECT_FALSE(run_sema(R"(
-        def add(x: int, y: int) -> int { return x + y; }
-        def main() -> int { return add(1); }
+        fn add(x: int, y: int) -> int { return x + y; }
+        fn main() -> int { return add(1); }
     )"));
 }
 
 TEST(Sema, TypeMismatch) {
     EXPECT_FALSE(run_sema(R"(
-        def main() -> int { return true; }
+        fn main() -> int { return true; }
     )"));
 }
 
 TEST(Sema, RefToRefError) {
     EXPECT_FALSE(run_sema(R"(
-        def bad(p: ref<ref<int>>) -> int { return 0; }
-        def main() -> int { return 0; }
+        fn bad(p: ref<ref<int>>) -> int { return 0; }
+        fn main() -> int { return 0; }
     )"));
 }
 
 TEST(Sema, OwnToOwnError) {
     EXPECT_FALSE(run_sema(R"(
-        def bad(p: own<own<int>>) {}
-        def main() -> int { return 0; }
+        fn bad(p: own<own<int>>) {}
+        fn main() -> int { return 0; }
     )"));
 }
 
 TEST(Sema, RefToOwnError) {
     EXPECT_FALSE(run_sema(R"(
-        def bad(p: ref<own<int>>) {}
-        def main() -> int { return 0; }
+        fn bad(p: ref<own<int>>) {}
+        fn main() -> int { return 0; }
     )"));
 }
 
 TEST(Sema, OwnToRefError) {
     EXPECT_FALSE(run_sema(R"(
-        def bad(p: own<ref<int>>) {}
-        def main() -> int { return 0; }
+        fn bad(p: own<ref<int>>) {}
+        fn main() -> int { return 0; }
     )"));
 }
 
 TEST(Sema, ValidList) {
     EXPECT_TRUE(run_sema(R"(
-        def main() -> int { let xs = [1, 2, 3]; return xs[0] + xs[2]; }
+        fn main() -> int { let xs = [1, 2, 3]; return xs[0] + xs[2]; }
     )"));
 }
 
 TEST(Sema, ValidWhile) {
     EXPECT_TRUE(run_sema(R"(
-        def main() -> int {
+        fn main() -> int {
             let i = 0; let s = 0;
             while i < 10 { i = i + 1; s = s + i; }
             return s;
@@ -109,36 +109,36 @@ TEST(Sema, ValidWhile) {
 
 TEST(Sema, BreakOutsideLoop) {
     EXPECT_FALSE(run_sema(R"(
-        def main() -> int { break; return 0; }
+        fn main() -> int { break; return 0; }
     )"));
 }
 
 TEST(Sema, RefTypeRequiresInit) {
     EXPECT_FALSE(run_sema(R"(
-        def main()->int { let x: ref<int>; return 0; }
+        fn main()->int { let x: ref<int>; return 0; }
     )"));
 }
 
 TEST(Sema, OwnTypeRequiresInit) {
     EXPECT_FALSE(run_sema(R"(
-        def main()->int { let x: own<int>; return 0; }
+        fn main()->int { let x: own<int>; return 0; }
     )"));
 }
 
 TEST(Sema, UseAfterMove) {
     EXPECT_FALSE(run_sema(R"(
-        def consume(x: own<int>) { let tmp = x; }
-        def main()->int { let a = 1; consume(a); return a; }
+        fn consume(x: own<int>) { let tmp = x; }
+        fn main()->int { let a = 1; consume(a); return a; }
     )"));
 }
 
 TEST(Sema, OwnParamCanBeUsedInsideFn) {
     EXPECT_TRUE(run_sema(R"(
-        def take(x: own<int>) {
+        fn take(x: own<int>) {
             let tmp = x;
             x = tmp + 1;
         }
-        def main()->int {
+        fn main()->int {
             let a = 1;
             take(a);
             return 0;
@@ -148,22 +148,22 @@ TEST(Sema, OwnParamCanBeUsedInsideFn) {
 
 TEST(Sema, UseAfterMoveInCaller) {
     EXPECT_FALSE(run_sema(R"(
-        def consume(x: own<int>) { let tmp = x; }
-        def main()->int { let a = 1; consume(a); return a; }
+        fn consume(x: own<int>) { let tmp = x; }
+        fn main()->int { let a = 1; consume(a); return a; }
     )"));
 }
 
 TEST(Sema, RefParamNoMove) {
     EXPECT_TRUE(run_sema(R"(
-        def inc(x: ref<int>) { x = x + 1; }
-        def main()->int { let a = 1; inc(a); return a; }
+        fn inc(x: ref<int>) { x = x + 1; }
+        fn main()->int { let a = 1; inc(a); return a; }
     )"));
 }
 
 TEST(Sema, MoveInIfBranch) {
     EXPECT_FALSE(run_sema(R"(
-        def consume(x: own<int>) { let tmp = x; }
-        def main()->int {
+        fn consume(x: own<int>) { let tmp = x; }
+        fn main()->int {
             let a = 1;
             if a > 0 { consume(a); }
             return a;
@@ -173,8 +173,8 @@ TEST(Sema, MoveInIfBranch) {
 
 TEST(Sema, MoveInIfElse) {
     EXPECT_FALSE(run_sema(R"(
-        def consume(x: own<int>) { let tmp = x; }
-        def main()->int {
+        fn consume(x: own<int>) { let tmp = x; }
+        fn main()->int {
             let a = 1;
             if a > 0 { consume(a); }
             else { consume(a); }

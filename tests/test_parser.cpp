@@ -21,7 +21,7 @@ TEST(Parser, EmptyProgram) {
 }
 
 TEST(Parser, SimpleFunction) {
-    auto [prog, diag] = parse_source("def main()->int { return 42; }");
+    auto [prog, diag] = parse_source("fn main()->int { return 42; }");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
@@ -32,7 +32,7 @@ TEST(Parser, SimpleFunction) {
 }
 
 TEST(Parser, FunctionWithParams) {
-    auto [prog, diag] = parse_source("def add(x:int, y:int) -> int { return x + y; }");
+    auto [prog, diag] = parse_source("fn add(x:int, y:int) -> int { return x + y; }");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
@@ -44,7 +44,7 @@ TEST(Parser, FunctionWithParams) {
 }
 
 TEST(Parser, VarDefWithInit) {
-    auto [prog, diag] = parse_source("def main()->int { let x = 42; return x; }");
+    auto [prog, diag] = parse_source("fn main()->int { let x = 42; return x; }");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
@@ -52,7 +52,7 @@ TEST(Parser, VarDefWithInit) {
 }
 
 TEST(Parser, RefParam) {
-    auto [prog, diag] = parse_source("def inc(x: ref int) { x = x + 1; }");
+    auto [prog, diag] = parse_source("fn inc(x: ref int) { x = x + 1; }");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
@@ -62,7 +62,7 @@ TEST(Parser, RefParam) {
 }
 
 TEST(Parser, OwnParam) {
-    auto [prog, diag] = parse_source("def take(x: own int) {}");
+    auto [prog, diag] = parse_source("fn take(x: own int) {}");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
@@ -71,7 +71,7 @@ TEST(Parser, OwnParam) {
 }
 
 TEST(Parser, ListLiteral) {
-    auto [prog, diag] = parse_source("def main()->int { let x = [1, 2, 3]; return x[0]; }");
+    auto [prog, diag] = parse_source("fn main()->int { let x = [1, 2, 3]; return x[0]; }");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
@@ -80,7 +80,7 @@ TEST(Parser, ListLiteral) {
 
 TEST(Parser, IfElse) {
     auto [prog, diag] = parse_source(
-        "def main()->int { if 1 > 0 { return 1; } else { return 0; } }");
+        "fn main()->int { if 1 > 0 { return 1; } else { return 0; } }");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
@@ -89,20 +89,20 @@ TEST(Parser, IfElse) {
 
 TEST(Parser, WhileLoop) {
     auto [prog, diag] = parse_source(
-        "def main()->int { let i = 0; while i < 10 { i = i + 1; } return i; }");
+        "fn main()->int { let i = 0; while i < 10 { i = i + 1; } return i; }");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
 }
 
 TEST(Parser, BinaryOps) {
-    auto [prog, diag] = parse_source("def main()->int { return 1 + 2 * 3; }");
+    auto [prog, diag] = parse_source("fn main()->int { return 1 + 2 * 3; }");
     ASSERT_EQ(prog.items.size(), 1u);
     ASSERT_FALSE(diag.has_errors());
 }
 
 TEST(Parser, ComparisonOps) {
-    auto [prog, diag] = parse_source("def main()->int { return 5 >= 3 and 2 <= 4; }");
+    auto [prog, diag] = parse_source("fn main()->int { return 5 >= 3 and 2 <= 4; }");
     ASSERT_EQ(prog.items.size(), 1u);
     ASSERT_FALSE(diag.has_errors());
 }
@@ -127,7 +127,7 @@ TEST(Parser, ClassDef) {
 }
 
 TEST(Parser, ListTypeParam) {
-    auto [prog, diag] = parse_source("def foo(x: list<int>) -> int { return x[0]; }");
+    auto [prog, diag] = parse_source("fn foo(x: list<int>) -> int { return x[0]; }");
     ASSERT_EQ(prog.items.size(), 1u);
     auto *func = std::get_if<FunctionDef>(&prog.items[0].item);
     ASSERT_NE(func, nullptr);
