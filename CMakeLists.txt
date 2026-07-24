@@ -100,7 +100,7 @@ add_library(catlang_lib STATIC ${SOURCES})
 
 llvm_map_components_to_libnames(LLVM_LIBS
     Analysis Core ExecutionEngine InstCombine Object OrcJIT
-    RuntimeDyld ScalarOpts Support native
+    Passes RuntimeDyld ScalarOpts Support TransformUtils native
 )
 list(REMOVE_DUPLICATES LLVM_LIBS)
 

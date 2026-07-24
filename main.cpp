@@ -15,6 +15,7 @@
 #include "jit.h"
 #include "lexer.h"
 #include "live_variable.h"
+#include "llvm_optimizer.h"
 #include "mlir_emitter.h"
 #include "parser.h"
 #include "printer.h"
@@ -28,21 +29,13 @@
 
 static void run() {
   std::string source = R"(
-    fn main()->int {
-      let map = fn(arr: list<int>, f: (int) -> int) -> list<int> {
-        let result: list<int>;
-        let i = 0;
-
-        while (i < arr.len()) {
-          result[i] = f(arr[i]);
-          i = i + 1;
+    fn add(a: int, b: int) -> int { return a + b; }
+        fn apply(op: (int, int) -> int, x: int, y: int) -> int { return op(x, y); }
+        fn main()->int {
+          let l:list<int>;
+          l = [1,3,4,5,6,6,6];
+          return apply(add, 10, 20);
         }
-        return result;
-      };
-      let arr = [1, 2, 3, 4];
-      let squared = map(arr, fn(x: int) -> int { return x * x; });
-      return squared[0] + squared[1] + squared[2] + squared[3];
-    }
   )";
 
   cat::File file("foo.cat", source);
@@ -76,6 +69,11 @@ static void run() {
 
   cat::ir::IrEmitter emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
   emitter.compile(program);
+  emitter.dump_module(std::cout);
+
+
+  cat::opt::LLVMOptimizer llvm_opt;
+  llvm_opt.optimize(const_cast<llvm::Module &>(emitter.get_module()));
   emitter.dump_module(std::cout);
 
   // cat::mmlir::MlirEmitter mlir_emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
