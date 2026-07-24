@@ -17,7 +17,7 @@ namespace cat {
       {"trait", TokenKind::Trait},
       {"for", TokenKind::For},
 
-      {"def", TokenKind::Def},
+      {"fn", TokenKind::Fn},
       {"let", TokenKind::Let},
       {"decl", TokenKind::Decl},
 

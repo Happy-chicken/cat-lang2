@@ -54,7 +54,7 @@ namespace cat {
     Elif,
     // declare
     Decl,
-    Def,
+    Fn,
     Let,
     // return
     Return,
@@ -191,8 +191,8 @@ namespace cat {
         return "Elif";
       case Decl:
         return "Decl";
-      case Def:
-        return "Def";
+      case Fn:
+        return "Fn";
       case Let:
         return "Let";
       case Return:
