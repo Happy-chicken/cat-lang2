@@ -168,12 +168,23 @@ void FlowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag) {
             if (!fn_sym) return;
 
             auto *fn_data = std::get_if<FunctionData>(&fn_sym->get_kind());
-            if (!fn_data) return;
+            if (fn_data) {
+              for (size_t i = 0; i < fn_data->params.size() && i < call.args.size(); ++i) {
+                if (!std::get_if<ast::Type::Own>(&fn_data->params[i].data)) continue;
+                if (auto *var = std::get_if<Variable>(&call.args[i]->expr))
+                  moved.insert(var->name);
+              }
+              return;
+            }
 
-            for (size_t i = 0; i < fn_data->params.size() && i < call.args.size(); ++i) {
-              if (!std::get_if<ast::Type::Own>(&fn_data->params[i].data)) continue;
-              if (auto *var = std::get_if<Variable>(&call.args[i]->expr))
-                moved.insert(var->name);
+            if (fn_sym->get_type().has_value()) {
+              if (auto *func_ty = std::get_if<ast::Type::Func>(&fn_sym->get_type()->data)) {
+                for (size_t i = 0; i < func_ty->params.size() && i < call.args.size(); ++i) {
+                  if (!func_ty->params[i] || !std::get_if<ast::Type::Own>(&func_ty->params[i]->data)) continue;
+                  if (auto *var = std::get_if<Variable>(&call.args[i]->expr))
+                    moved.insert(var->name);
+                }
+              }
             }
           },
           [&](const AssignExpr &a) {

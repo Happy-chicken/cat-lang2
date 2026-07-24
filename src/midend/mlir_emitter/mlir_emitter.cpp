@@ -8,7 +8,10 @@
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Types.h"
+#include "printer.h"
 #include "stmt.h"
+#include "type.h"
 
 namespace cat::mmlir {
 
@@ -47,6 +50,7 @@ namespace cat::mmlir {
             [&](const ast::Type::Class &) { return i32_ty(ctx->mlir_ctx); },
             [&](const ast::Type::Void &) -> mlir::Type { return {}; },
             [&](const ast::Type::Str &) { return i32_ty(ctx->mlir_ctx); },
+            [&](const ast::Type::Func &) -> mlir::Type { return {}; },
         },
         ast_type.data
     );

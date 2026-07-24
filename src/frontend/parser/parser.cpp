@@ -804,6 +804,32 @@ namespace cat {
         consume(TokenKind::Greater, "Expected '>' after list type.");
         return type_list(std::move(*element_type));
       }
+      case TokenKind::LeftParen: {
+        advance();
+        std::vector<uptr<ast::Type>> param_types;
+        if (!check(TokenKind::RightParen)) {
+          auto first_type = parse_type();
+          if (!first_type.has_value()) {
+            return std::nullopt;
+          }
+          param_types.push_back(std::make_unique<ast::Type>(std::move(*first_type)));
+          while (check(TokenKind::Comma)) {
+            advance();
+            auto next_type = parse_type();
+            if (!next_type.has_value()) {
+              return std::nullopt;
+            }
+            param_types.push_back(std::make_unique<ast::Type>(std::move(*next_type)));
+          }
+        }
+        consume(TokenKind::RightParen, "Expected ')' after function parameter types.");
+        consume(TokenKind::Arrow, "Expected '->' after function parameter types.");
+        auto ret_type = parse_type();
+        if (!ret_type.has_value()) {
+          return std::nullopt;
+        }
+        return type_func(std::move(param_types), std::make_unique<ast::Type>(std::move(*ret_type)));
+      }
       default:
         return unexpected<ast::Type>("Unexpected in type");
     }

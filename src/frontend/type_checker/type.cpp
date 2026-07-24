@@ -20,10 +20,10 @@ namespace cat::semantics {
           } else if constexpr (std::is_same_v<T, Own>) {
             return Type(Own{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
           } else if constexpr (std::is_same_v<T, Func>) {
-            vector<Type> cloned_params;
+            vector<uptr<Type>> cloned_params;
             cloned_params.reserve(v.params.size());
             for (const auto &p: v.params) {
-              cloned_params.push_back(p.clone());
+              cloned_params.push_back(std::make_unique<Type>(p->clone()));
             }
             return Type(
                 Func{std::move(cloned_params), std::make_unique<Type>(v.ret ? v.ret->clone() : Type())}
@@ -144,7 +144,7 @@ namespace cat::semantics {
             oss << "(";
             for (size_t i = 0; i < v.params.size(); ++i) {
               if (i > 0) oss << ", ";
-              oss << v.params[i].to_string();
+              oss << v.params[i]->to_string();
             }
             oss << ") -> " << (v.ret ? v.ret->to_string() : string("?"));
             return oss.str();

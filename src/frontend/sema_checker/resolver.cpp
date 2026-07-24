@@ -240,6 +240,15 @@ namespace cat {
         if (v.inner) {
           collect_class_deps(*v.inner, deps);
         }
+      } else if constexpr (std::is_same_v<T, ast::Type::Func>) {
+        for (const auto &param: v.params) {
+          if (param) {
+            collect_class_deps(*param, deps);
+          }
+        }
+        if (v.ret) {
+          collect_class_deps(*v.ret, deps);
+        }
       }
     },
                ty.data);

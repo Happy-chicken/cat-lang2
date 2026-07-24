@@ -296,3 +296,13 @@ TEST(Integration, OwnChainWithClass) {
         }
     )"), 14);
 }
+
+TEST(Integration, FirstClassFunctionTypeAnnotation) {
+    EXPECT_EQ(compile_and_run(R"(
+        def add(a: int, b: int) -> int { return a + b; }
+        def apply(op: (int, int) -> int, x: int, y: int) -> int { return op(x, y); }
+        def main()->int {
+            return apply(add, 10, 20);
+        }
+    )"), 30);
+}

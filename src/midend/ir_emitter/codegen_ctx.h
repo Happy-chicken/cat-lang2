@@ -20,6 +20,7 @@ namespace cat::ir {
     bool         is_ref = false;
     bool         is_own = false;
     vector<llvm::Type *> deref_chain;
+    llvm::FunctionType *func_ty = nullptr;
   };
 
   struct LoopInfo {

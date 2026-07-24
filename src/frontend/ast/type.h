@@ -18,27 +18,32 @@ namespace cat::ast {
     struct Void {};
 
     struct Ptr {
-      std::unique_ptr<Type> inner;
+      uptr<Type> inner;
     };
 
     struct Ref {
-      std::unique_ptr<Type> inner;
+      uptr<Type> inner;
     };
 
     struct Own {
-      std::unique_ptr<Type> inner;
+      uptr<Type> inner;
     };
 
     struct List {
-      std::unique_ptr<Type> inner;
+      uptr<Type> inner;
+    };
+
+    struct Func {
+      vector<uptr<Type>> params;
+      uptr<Type> ret;
     };
 
     struct Class {
-      std::string name;
+      string name;
     };
 
     using Variant =
-        std::variant<Int, Float, Bool, Char, Str, Void, Ptr, Ref, Own, List, Class>;
+        std::variant<Int, Float, Bool, Char, Str, Void, Ptr, Ref, Own, List, Func, Class>;
 
     Variant data;
 
@@ -57,33 +62,30 @@ namespace cat::ast {
           [](const auto &a, const auto &b) -> bool {
             using T = std::decay_t<decltype(a)>;
             using U = std::decay_t<decltype(b)>;
+
             if constexpr (!std::is_same_v<T, U>) {
               return false;
             } else {
-      if constexpr (std::is_same_v<T, Ptr>) {
-        if (!a.inner && !b.inner)
-          return true;
-        if (!a.inner || !b.inner)
-          return false;
-        return *a.inner == *b.inner;
-      } else if constexpr (std::is_same_v<T, Ref>) {
-        if (!a.inner && !b.inner)
-          return true;
-        if (!a.inner || !b.inner)
-          return false;
-        return *a.inner == *b.inner;
-      } else if constexpr (std::is_same_v<T, Own>) {
-        if (!a.inner && !b.inner)
-          return true;
-        if (!a.inner || !b.inner)
-          return false;
-        return *a.inner == *b.inner;
-      } else if constexpr (std::is_same_v<T, List>) {
-                if (!a.inner && !b.inner)
-                  return true;
-                if (!a.inner || !b.inner)
-                  return false;
+              if constexpr (std::is_same_v<T, Ptr> ||
+                            std::is_same_v<T, Ref> ||
+                            std::is_same_v<T, Own> ||
+                            std::is_same_v<T, List>) {
+                if (!a.inner && !b.inner) return true;
+                if (!a.inner || !b.inner) return false;
                 return *a.inner == *b.inner;
+              } else if constexpr (std::is_same_v<T, Func>) {
+                if (a.params.size() != b.params.size()) return false;
+
+                bool params_equal = std::ranges::equal(
+                    a.params, b.params,
+                    [](const auto &p1, const auto &p2) {
+                      return *p1 == *p2;
+                    }
+                );
+                if (!params_equal) return false;
+                if (!a.ret && !b.ret) return true;
+                if (!a.ret || !b.ret) return false;
+                return *a.ret == *b.ret;
               } else if constexpr (std::is_same_v<T, Class>) {
                 return a.name == b.name;
               } else {
@@ -113,14 +115,25 @@ namespace cat::ast {
           return Type(Str{});
         } else if constexpr (std::is_same_v<T, Void>) {
           return Type(Void{});
-        } else if constexpr (std::is_same_v<T, Ptr>) {
-          return Type(Ptr{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
-        } else if constexpr (std::is_same_v<T, Ref>) {
-          return Type(Ref{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
-        } else if constexpr (std::is_same_v<T, Own>) {
-          return Type(Own{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
-        } else if constexpr (std::is_same_v<T, List>) {
-          return Type(List{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
+        } else if constexpr (std::is_same_v<T, Ptr> ||
+                             std::is_same_v<T, Ref> ||
+                             std::is_same_v<T, Own> ||
+                             std::is_same_v<T, List>) {
+          return Type(std::decay_t<decltype(v)>{v.inner ? std::make_unique<Type>(v.inner->clone()) : nullptr});
+        } else if constexpr (std::is_same_v<T, Func>) {
+          std::vector<uptr<Type>> cloned_params;
+          cloned_params.reserve(v.params.size());
+          for (const auto &param: v.params) {
+            if (param) {
+              cloned_params.push_back(std::make_unique<Type>(param->clone()));
+            } else {
+              cloned_params.push_back(nullptr);
+            }
+          }
+
+          uptr<Type> cloned_ret = v.ret ? std::make_unique<Type>(v.ret->clone()) : nullptr;
+
+          return Type(Func{std::move(cloned_params), std::move(cloned_ret)});
         } else if constexpr (std::is_same_v<T, Class>) {
           return Type(Class{v.name});
         } else {
@@ -129,7 +142,6 @@ namespace cat::ast {
       },
                         data);
     }
-
     string to_string() const {
       return std::visit([](const auto &v) -> std::string {
         using T = std::decay_t<decltype(v)>;
@@ -153,6 +165,15 @@ namespace cat::ast {
           return "ref<" + (v.inner ? v.inner->to_string() : "?") + ">";
         } else if constexpr (std::is_same_v<T, Type::Own>) {
           return "own<" + (v.inner ? v.inner->to_string() : "?") + ">";
+        } else if constexpr (std::is_same_v<T, Type::Func>) {
+          std::string result = "(";
+          for (size_t i = 0; i < v.params.size(); ++i) {
+            if (i > 0) result += ", ";
+            result += v.params[i] ? v.params[i]->to_string() : "?";
+          }
+          result += ") -> ";
+          result += v.ret ? v.ret->to_string() : "?";
+          return result;
         } else if constexpr (std::is_same_v<T, Type::Class>) {
           return v.name;
         } else {
@@ -188,6 +209,10 @@ namespace cat::ast {
 
   inline Type type_class(std::string name) {
     return Type(Type::Class{std::move(name)});
+  }
+
+  inline Type type_func(vector<uptr<Type>> params, uptr<Type> ret) {
+    return Type(Type::Func{std::move(params), std::move(ret)});
   }
 
   // ----- std::hash 特化（使用 std::visit 实现）-----

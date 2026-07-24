@@ -42,6 +42,9 @@ namespace cat {
   }
 
   bool Symbol::is_callable() const {
+    if (type.has_value() && std::holds_alternative<ast::Type::Func>(type->data)) {
+      return true;
+    }
     return std::visit(
         [](const auto &v) -> bool {
           using T = std::decay_t<decltype(v)>;

@@ -49,10 +49,10 @@ namespace cat::semantics {
               }
               return Type::own(Type::error());
             } else if constexpr (std::is_same_v<T, Type::Func>) {
-              std::vector<Type> resolved_params;
+              std::vector<uptr<Type>> resolved_params;
               resolved_params.reserve(v.params.size());
               for (const auto &p: v.params) {
-                resolved_params.push_back(self(self, p));
+                resolved_params.push_back(std::make_unique<Type>(self(self, *p)));
               }
               Type resolved_ret = v.ret ? self(self, *v.ret) : Type::error();
               return Type::func(std::move(resolved_params), std::move(resolved_ret));

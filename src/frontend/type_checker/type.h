@@ -35,7 +35,7 @@ public:
       uptr<Type> inner;
     };
     struct Func {
-      vector<Type> params;
+      vector<uptr<Type>> params;
       uptr<Type> ret;
     };
     struct Class {
@@ -81,7 +81,7 @@ public:
     static Type own(Type inner) {
       return Type(Own{std::make_unique<Type>(std::move(inner))});
     }
-    static Type func(vector<Type> params, Type ret) {
+    static Type func(vector<uptr<Type>> params, Type ret) {
       return Type(
           Func{std::move(params), std::make_unique<Type>(std::move(ret))}
       );

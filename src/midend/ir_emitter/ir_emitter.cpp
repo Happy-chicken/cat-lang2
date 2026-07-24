@@ -78,6 +78,12 @@ namespace cat::ir {
           if constexpr (std::is_same_v<T, ast::Type::Class>) {
             return ptr_ty(c);
           }
+          if constexpr (std::is_same_v<T, ast::Type::Func>) {
+            vector<llvm::Type *> ptypes;
+            for (auto &p: v.params) ptypes.push_back(p ? llvm_type(*p) : i32(c));
+            auto *ret = v.ret ? llvm_type(*v.ret) : void_ty(c);
+            return llvm::PointerType::get(llvm::FunctionType::get(ret, ptypes, false), 0);
+          }
           return i32(c);
         },
         ast_type.data
@@ -86,6 +92,18 @@ namespace cat::ir {
 
   llvm::Type *IrEmitter::ast_type_to_llvm_type(const ast::Type &ast_type) {
     return llvm_type(ast_type);
+  }
+
+  llvm::FunctionType *IrEmitter::llvm_func_type(const ast::Type &ast_type) {
+    if (auto *func = std::get_if<ast::Type::Func>(&ast_type.data)) {
+      auto &c = *ctx->llvm_ctx;
+      vector<llvm::Type *> ptypes;
+      for (auto &p: func->params)
+        ptypes.push_back(p ? llvm_type(*p) : i32(c));
+      auto *ret = func->ret ? llvm_type(*func->ret) : void_ty(c);
+      return llvm::FunctionType::get(ret, ptypes, false);
+    }
+    return nullptr;
   }
 
   llvm::Type *IrEmitter::ptr_pointee_llvm_type(const ast::Type &ast_type) {
@@ -281,7 +299,8 @@ namespace cat::ir {
         *ctx->module, var_ty, gv.ty.has_value(),
         llvm::GlobalValue::ExternalLinkage, cinit, gv.name
     );
-    env->declare_var(gv.name, gv_ptr, var_ty, var_ty);
+    env->declare_var(gv.name, gv_ptr, var_ty, var_ty, false, {}, false,
+                      gv.ty ? llvm_func_type(*gv.ty) : nullptr);
   }
 
   // ── functions ──
@@ -335,7 +354,8 @@ namespace cat::ir {
         auto &own = std::get<ast::Type::Own>(p.ty.data);
         val_ty = own.inner ? llvm_type(*own.inner) : val_ty;
       }
-      env->declare_var(p.name, a, arg.getType(), val_ty, is_ref, ptr_deref_chain(p.ty), is_own);
+      env->declare_var(p.name, a, arg.getType(), val_ty, is_ref, ptr_deref_chain(p.ty), is_own,
+                       llvm_func_type(p.ty));
 
       if (!is_ref && !is_own && std::get_if<ast::Type::List>(&p.ty.data)) {
         auto &list_t = std::get<ast::Type::List>(p.ty.data);
@@ -384,14 +404,18 @@ namespace cat::ir {
             [&](const VarDefStmt &s) {
               llvm::Value *iv = s.init ? compile_expr(*s.init) : nullptr;
               llvm::Type *vt = iv     ? iv->getType()
-                               : s.ty ? llvm_type(*s.ty)
-                                      : i32(*ctx->llvm_ctx);
+                                : s.ty ? llvm_type(*s.ty)
+                                       : i32(*ctx->llvm_ctx);
+              if (llvm::isa<llvm::FunctionType>(vt)) {
+                vt = llvm::PointerType::get(vt, 0);
+              }
               auto *a = ctx->builder->CreateAlloca(vt, nullptr, s.name);
               if (iv) ctx->builder->CreateStore(iv, a);
 
               bool is_ref = s.ty && std::get_if<ast::Type::Ref>(&s.ty->data);
               bool is_own = s.ty && std::get_if<ast::Type::Own>(&s.ty->data);
-              env->declare_var(s.name, a, vt, vt, is_ref, s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{}, is_own);
+              env->declare_var(s.name, a, vt, vt, is_ref, s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{}, is_own,
+                               s.ty ? llvm_func_type(*s.ty) : nullptr);
 
               if (s.ty && std::get_if<ast::Type::Own>(&s.ty->data)) {
                 if (auto *var = std::get_if<Variable>(&s.init->expr))
@@ -519,6 +543,8 @@ namespace cat::ir {
             [&](const Variable &e) -> llvm::Value * {
               auto v = env->lookup_var(e.name);
               if (!v.ptr || !v.alloca_ty) {
+                auto *fn = ctx->module->getFunction(e.name);
+                if (fn) return fn;
                 diag.error(span, "Undefined variable: " + e.name).emit_to(diag);
                 return llvm::Constant::getNullValue(i32(*ctx->llvm_ctx));
               }
@@ -692,23 +718,47 @@ namespace cat::ir {
                 fn = ctx->module->getFunction(callee.name + "_ctor");
                 is_ctor = true;
               }
-              if (!fn) {
-                diag.error(span, "Undefined function: " + callee.name).emit_to(diag);
-                return nullptr;
+              if (fn) {
+                ClassInfo *ctor_info = nullptr;
+                if (is_ctor) {
+                  auto it = ctx->class_registry.find(callee.name);
+                  if (it != ctx->class_registry.end()) ctor_info = it->second.get();
+                }
+
+                auto args = compile_args(fn, call.args, 0, ctor_info);
+
+                auto *call_inst = ctx->builder->CreateCall(fn, args);
+                if (!is_ctor)
+                  invalidate_owned_args(callee.name, call.args, 0);
+                return call_inst;
               }
 
-              ClassInfo *ctor_info = nullptr;
-              if (is_ctor) {
-                auto it = ctx->class_registry.find(callee.name);
-                if (it != ctx->class_registry.end()) ctor_info = it->second.get();
+              if (env->has_var(callee.name)) {
+                auto vi = env->lookup_var(callee.name);
+                if (!vi.ptr) {
+                  diag.error(span, "Undefined function: " + callee.name).emit_to(diag);
+                  return nullptr;
+                }
+                auto *fn_ptr = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
+                auto *fn_ty = vi.func_ty;
+
+                if (!fn_ty) {
+                  diag.error(span, "Cannot determine function type for indirect call of '" + callee.name + "'").emit_to(diag);
+                  return nullptr;
+                }
+
+                vector<llvm::Value *> args;
+                args.reserve(call.args.size());
+                for (auto &arg: call.args) {
+                  auto *arg_val = compile_expr(*arg);
+                  if (!arg_val) return nullptr;
+                  args.push_back(arg_val);
+                }
+                return ctx->builder->CreateCall(fn_ty, fn_ptr, args);
               }
 
-              auto args = compile_args(fn, call.args, 0, ctor_info);
-
-              auto *call_inst = ctx->builder->CreateCall(fn, args);
-              if (!is_ctor)
-                invalidate_owned_args(callee.name, call.args, 0);
-              return call_inst;
+              diag.error(span, "Undefined function: " + callee.name).emit_to(diag);
+              return nullptr;
             },
             [&](const MemberExpr &callee) -> llvm::Value * {
               auto *self = compile_expr(*callee.object);

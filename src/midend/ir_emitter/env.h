@@ -15,8 +15,9 @@ namespace cat::ir {
                       llvm::Type *alloca_ty, llvm::Type *value_ty,
                       bool is_ref = false,
                       vector<llvm::Type *> deref_chain = {},
-                      bool is_own = false) {
-      locals[name] = VarInfo{ptr, alloca_ty, value_ty, is_ref, is_own, std::move(deref_chain)};
+                      bool is_own = false,
+                      llvm::FunctionType *func_ty = nullptr) {
+      locals[name] = VarInfo{ptr, alloca_ty, value_ty, is_ref, is_own, std::move(deref_chain), func_ty};
     }
 
     VarInfo lookup_var(const string &name) const {

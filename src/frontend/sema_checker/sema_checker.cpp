@@ -309,7 +309,17 @@ namespace cat {
                       .emit_to(diag);
                 }
               },
-              [&](const auto&) {}
+              [&](const auto& data) {
+                if (sym->get_type().has_value()) {
+                  if (auto *func_ty = std::get_if<ast::Type::Func>(&sym->get_type()->data)) {
+                    int expected_args = static_cast<int>(func_ty->params.size());
+                    if (expected_args != static_cast<int>(call.args.size())) {
+                      diag.error(span, "Function '" + func_name + "' expects " + std::to_string(expected_args) + " arguments, but " + std::to_string(call.args.size()) + " were provided")
+                          .emit_to(diag);
+                    }
+                  }
+                }
+              },
             }, sym->get_kind());
           }
         }
