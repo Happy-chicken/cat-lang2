@@ -28,14 +28,21 @@
 
 static void run() {
   std::string source = R"(
-    fn diff(a: ref<int>, b: own<ptr<int>>) -> int { return a - *b; }
-        fn main()->int {
-            let x = 100;
-            let y = 35;
-            let a = &y;
-            let d = diff(x, a);
-            return *a;
+    fn main()->int {
+      let map = fn(arr: list<int>, f: (int) -> int) -> list<int> {
+        let result: list<int>;
+        let i = 0;
+
+        while (i < arr.len()) {
+          result[i] = f(arr[i]);
+          i = i + 1;
         }
+        return result;
+      };
+      let arr = [1, 2, 3, 4];
+      let squared = map(arr, fn(x: int) -> int { return x * x; });
+      return squared[0] + squared[1] + squared[2] + squared[3];
+    }
   )";
 
   cat::File file("foo.cat", source);

@@ -51,22 +51,21 @@ namespace cat::opt::ana {
 
   CFG AnalysisCtxt::build_cfg(const llvm::Function &func, FunctionAnalysisData &fdata) {
     CFG cfg;
-    unordered_map<const llvm::BasicBlock *, uint32_t> bb2id;
 
     for (const auto &bb : func) {
-      bb2id[&bb] = static_cast<uint32_t>(cfg.blocks.size());
       BlockInfo bi;
       bi.id = static_cast<uint32_t>(cfg.blocks.size());
-      extract_block_def_use(bb, bb2id, bi.def, bi.use);
+      bi.bb = &bb;
+      extract_block_def_use(bb, bi.def, bi.use);
       cfg.blocks.push_back(std::move(bi));
     }
 
     fdata.block_expressions.resize(cfg.blocks.size());
     fdata.block_defs.resize(cfg.blocks.size());
 
-    for (const auto &bb : func) {
-      auto block_id = bb2id[&bb];
-      for (const auto &inst : bb) {
+    for (auto &bi : cfg.blocks) {
+      auto block_id = bi.id;
+      for (const auto &inst : *bi.bb) {
         if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
           if (is_valid_var(alloca)) {
             fdata.alloca_names.insert(alloca);
@@ -100,10 +99,8 @@ namespace cat::opt::ana {
       }
     }
 
-    for (const auto &bb : func) {
-      auto id = bb2id[&bb];
-      cfg.blocks[id].succ = get_successor_indices(bb, bb2id);
-    }
+    for (auto &bi : cfg.blocks)
+      bi.succ = get_successor_indices(*bi.bb, cfg.blocks);
 
     BlockInfo exit_block;
     exit_block.id = static_cast<uint32_t>(cfg.blocks.size());
@@ -120,7 +117,6 @@ namespace cat::opt::ana {
 
   void AnalysisCtxt::extract_block_def_use(
       const llvm::BasicBlock &bb,
-      unordered_map<const llvm::BasicBlock *, uint32_t> & /*bb2id*/,
       ValueSet &def, ValueSet &use
   ) {
     for (const auto &inst : bb) {
@@ -161,16 +157,19 @@ namespace cat::opt::ana {
 
   vector<uint32_t> AnalysisCtxt::get_successor_indices(
       const llvm::BasicBlock &bb,
-      const unordered_map<const llvm::BasicBlock *, uint32_t> &bb2id
+      const vector<BlockInfo> &blocks
   ) {
     vector<uint32_t> succs;
     auto *term = bb.getTerminator();
     if (!term) return succs;
     for (unsigned i = 0; i < term->getNumSuccessors(); ++i) {
       auto *succ_bb = term->getSuccessor(i);
-      auto it = bb2id.find(succ_bb);
-      if (it != bb2id.end())
-        succs.push_back(it->second);
+      for (auto &b : blocks) {
+        if (b.bb == succ_bb) {
+          succs.push_back(b.id);
+          break;
+        }
+      }
     }
     return succs;
   }

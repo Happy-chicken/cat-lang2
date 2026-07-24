@@ -14,6 +14,7 @@ namespace cat::opt::ana {
 
   struct BlockInfo {
     uint32_t id;
+    const llvm::BasicBlock *bb;
     ValueSet def;
     ValueSet use;
     vector<uint32_t> succ;
@@ -52,8 +53,8 @@ public:
 
 private:
     CFG build_cfg(const llvm::Function &func, FunctionAnalysisData &fdata);
-    void extract_block_def_use(const llvm::BasicBlock &bb, unordered_map<const llvm::BasicBlock *, uint32_t> &bb2id, ValueSet &def, ValueSet &use);
-    vector<uint32_t> get_successor_indices(const llvm::BasicBlock &bb, const unordered_map<const llvm::BasicBlock *, uint32_t> &bb2id);
+    void extract_block_def_use(const llvm::BasicBlock &bb, ValueSet &def, ValueSet &use);
+    vector<uint32_t> get_successor_indices(const llvm::BasicBlock &bb, const vector<BlockInfo> &blocks);
 
     unordered_map<string, CFG> cfgs;
     unordered_map<string, uptr<FunctionAnalysisData>> func_data;
