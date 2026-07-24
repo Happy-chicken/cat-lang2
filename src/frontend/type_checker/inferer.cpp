@@ -103,6 +103,17 @@ namespace cat::semantics {
             [&](const ListExpr &list) {
               return infer_list_literal(list, span, ctxt, diag);
             },
+            [&](const LambdaExpr &lambda) -> Type {
+              std::vector<uptr<Type>> param_types;
+              param_types.reserve(lambda.params.size());
+              for (auto &pt : lambda.params) {
+                param_types.push_back(std::make_unique<Type>(ast_type_to_semantic_type(pt.ty)));
+              }
+              Type ret_type = lambda.return_type
+                                  ? ast_type_to_semantic_type(*lambda.return_type)
+                                  : Type::prim(PrimType::Void);
+              return Type::func(std::move(param_types), std::move(ret_type));
+            },
             [&](const auto &) -> Type {
               diag.error(span, "Unsupported expression type for type inference")
                   .emit_to(diag);

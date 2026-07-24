@@ -53,6 +53,23 @@ namespace cat::semantics {
             [&](const Type::Class &cls) -> optional<ast::Type> {
               return ast::type_class(cls.name);
             },
+            [&](const Type::Func &func) -> optional<ast::Type> {
+              vector<uptr<ast::Type>> param_types;
+              param_types.reserve(func.params.size());
+              for (auto &p : func.params) {
+                if (p) {
+                  auto inner = semantic_type_to_ast_type(*p);
+                  param_types.push_back(std::make_unique<ast::Type>(std::move(*inner)));
+                }
+              }
+              std::optional<ast::Type> ret;
+              if (func.ret) {
+                ret = semantic_type_to_ast_type(*func.ret);
+              } else {
+                ret = ast::type_void();
+              }
+              return ast::Type(ast::Type::Func{std::move(param_types), std::make_unique<ast::Type>(std::move(*ret))});
+            },
             [&](const auto &) -> optional<ast::Type> { return std::nullopt; },
         },
         ty.get_data()

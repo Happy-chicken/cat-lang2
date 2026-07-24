@@ -212,6 +212,17 @@ namespace cat::ast {
                          print_expr_ptr(os, child_prefix, i == e.elements.size() - 1, e.elements[i]);
                        }
                      },
+                     [&](const LambdaExpr &e) {
+                       os << prefix << branch(is_last) << "LambdaExpr\n";
+                       auto child_prefix = next_prefix(prefix, is_last);
+                       print_params_inline(os, e.params);
+                       if (e.return_type) {
+                         os << child_prefix << branch(!e.body) << "-> " << type_to_string(*e.return_type) << "\n";
+                       }
+                       if (e.body) {
+                         print_block(os, child_prefix, true, *e.body);
+                       }
+                     },
                  },
                  expr);
     }
@@ -447,3 +458,13 @@ namespace cat::ast {
   }
 
 }// namespace cat::ast
+
+namespace cat {
+  LambdaExpr::LambdaExpr(vector<Parameter> p, optional<ast::Type> r, uptr<Block> b)
+      : params(std::move(p)), return_type(std::move(r)), body(std::move(b)) {}
+  LambdaExpr::~LambdaExpr() = default;
+
+  Expr make_lambda(vector<Parameter> params, optional<ast::Type> return_type, uptr<Block> body) {
+    return Expr{LambdaExpr{std::move(params), std::move(return_type), std::move(body)}};
+  }
+} // namespace cat

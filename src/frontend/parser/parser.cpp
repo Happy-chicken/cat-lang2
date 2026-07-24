@@ -92,7 +92,7 @@ namespace cat {
         advance();
         return;
       }
-      if (check_any({TokenKind::Let, TokenKind::Def, TokenKind::Class, TokenKind::If, TokenKind::While, TokenKind::Return, TokenKind::Break, TokenKind::Continue, TokenKind::TokenEOF})) {
+      if (check_any({TokenKind::Let, TokenKind::Fn, TokenKind::Class, TokenKind::If, TokenKind::While, TokenKind::Return, TokenKind::Break, TokenKind::Continue, TokenKind::TokenEOF})) {
         advance();// 跳过该关键字，视为同步点
         return;
       }
@@ -117,7 +117,7 @@ namespace cat {
           return std::nullopt;
         }
       }
-      case TokenKind::Def: {
+      case TokenKind::Fn: {
         auto func = parse_function();
         if (func.has_value()) {
           return ItemNode{span, std::move(*func)};
@@ -715,6 +715,9 @@ namespace cat {
         advance();
         return ExprNode{span, std::move(expr)};
       }
+      case TokenKind::Fn: {
+        return parse_lambda();
+      }
       default:
         return unexpected<ExprNode>("Unexpected in primary expression");
     }
@@ -900,7 +903,7 @@ namespace cat {
   }
 
   error::ParseResult<FunctionDef> Parser::parse_function() {
-    consume(TokenKind::Def, "Expected 'def' before function definition.");
+    consume(TokenKind::Fn, "Expected 'fn' before function definition.");
     auto header = parse_header();
     if (!header.has_value()) {
       return std::nullopt;
@@ -1071,5 +1074,40 @@ namespace cat {
     auto callee_node = std::make_unique<ExprNode>(std::move(callee));
     auto call_expr = make_call(std::move(callee_node), std::move(*args));
     return ExprNode{current_span(), std::move(call_expr)};
+  }
+
+  error::ParseResult<ExprNode> Parser::parse_lambda() {
+    auto span = current_span();
+    advance(); // consume 'fn'
+    consume(TokenKind::LeftParen, "Expected '(' after 'fn'.");
+    auto params = std::vector<Parameter>{};
+    while (!check(TokenKind::RightParen)) {
+      auto param = parse_parameter();
+      if (!param.has_value()) {
+        return std::nullopt;
+      }
+      params.push_back(std::move(*param));
+      if (check(TokenKind::Comma)) {
+        advance();
+      } else {
+        break;
+      }
+    }
+    consume(TokenKind::RightParen, "Expected ')' after parameters.");
+    std::optional<ast::Type> return_type = std::nullopt;
+    if (check(TokenKind::Arrow)) {
+      advance();
+      auto ret_type = parse_type();
+      if (!ret_type.has_value()) {
+        return std::nullopt;
+      }
+      return_type = std::move(*ret_type);
+    }
+    auto body = parse_block();
+    if (!body.has_value()) {
+      return std::nullopt;
+    }
+    auto func_expr = make_lambda(std::move(params), std::move(return_type), std::make_unique<Block>(std::move(*body)));
+    return ExprNode{span, std::move(func_expr)};
   }
 }// namespace cat

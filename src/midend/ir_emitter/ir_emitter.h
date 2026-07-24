@@ -8,6 +8,7 @@
 #include "item.h"
 #include "sema_ctx.h"
 #include "stmt.h"
+#include <unordered_set>
 namespace cat::ir {
 
   class IrEmitter {
@@ -51,6 +52,9 @@ public:
     llvm::Value *emit_string_literal(const string &s);
     llvm::Value *compile_binary(const BinaryExpr &binary_expr);
     llvm::Value *compile_unary(const UnaryExpr &unary_expr);
+    llvm::Value *compile_lambda(const LambdaExpr &lambda);
+    void collect_free_vars(const StmtNode &stmt, const unordered_set<string> &params, unordered_set<string> &captured);
+    void collect_free_vars_expr(const ExprNode &expr, const unordered_set<string> &params, unordered_set<string> &captured);
 
 public:
     class EnvGuard {

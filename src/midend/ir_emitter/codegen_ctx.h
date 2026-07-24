@@ -55,6 +55,7 @@ namespace cat::ir {
     llvm::StringMap<uptr<ClassInfo>> class_registry;
     llvm::StringMap<uptr<ListType>> list_types;
     uint32_t str_counter = 0;
+    uint32_t lambda_counter = 0;
 
     CodeGenCtxt(const string &module_name);
   };

@@ -28,8 +28,8 @@
 
 static void run() {
   std::string source = R"(
-    def diff(a: ref<int>, b: own<ptr<int>>) -> int { return a - *b; }
-        def main()->int {
+    fn diff(a: ref<int>, b: own<ptr<int>>) -> int { return a - *b; }
+        fn main()->int {
             let x = 100;
             let y = 35;
             let a = &y;

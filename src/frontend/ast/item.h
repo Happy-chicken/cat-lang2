@@ -5,11 +5,6 @@
 #include "type.h"
 namespace cat {
 
-  struct Parameter {
-    std::string name;
-    ast::Type ty;
-  };
-
   struct FunctionDecl {
     std::string name;
     std::vector<Parameter> params;

@@ -1,5 +1,6 @@
 #include "ir_emitter.h"
 #include "expr.h"
+#include <ranges>
 #include <llvm-20/llvm/IR/Constants.h>
 #include <llvm-20/llvm/IR/Function.h>
 #include <llvm-20/llvm/IR/GlobalVariable.h>
@@ -389,6 +390,172 @@ namespace cat::ir {
     current_function = saved_fn;
   }
 
+  llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
+    auto &c = *ctx->llvm_ctx;
+
+    vector<llvm::Type *> ptypes;
+    for (size_t i = 0; i < lambda.params.size(); ++i) {
+      auto &pt = lambda.params[i].ty;
+      bool is_ref = std::get_if<ast::Type::Ref>(&pt.data) != nullptr;
+      bool is_own = std::get_if<ast::Type::Own>(&pt.data) != nullptr;
+      if (is_own) {
+        auto &own = std::get<ast::Type::Own>(pt.data);
+        ptypes.push_back(own.inner ? llvm_type(*own.inner) : llvm_type(pt));
+      } else {
+        ptypes.push_back(is_ref ? ptr_ty(c) : llvm_type(pt));
+      }
+    }
+    auto *ret = lambda.return_type ? llvm_type(*lambda.return_type) : void_ty(c);
+    auto *ft = llvm::FunctionType::get(ret, ptypes, false);
+
+    string name = "__lambda_" + std::to_string(ctx->lambda_counter);
+    auto *fn = llvm::Function::Create(ft, llvm::Function::InternalLinkage, name, ctx->module.get());
+
+    auto saved_fn = std::exchange(current_function, fn);
+    auto saved_insert = ctx->builder->saveIP();
+
+    auto view = lambda.params | std::views::transform([](const Parameter &p) { return p.name; });
+    unordered_set<string> param_set(view.begin(), view.end());
+
+    unordered_set<string> captured;
+    if (lambda.body) {
+      for (auto &stmt : lambda.body->stmts) {
+        collect_free_vars(stmt, param_set, captured);
+      }
+    }
+
+    unordered_map<string, llvm::GlobalVariable *> capture_globals;
+    for (auto &cap_name : captured) {
+      auto vi = env->lookup_var(cap_name);
+      if (!vi.ptr) continue;
+      auto *ptr_ty = llvm::PointerType::get(c, 0);
+      auto *gv = new llvm::GlobalVariable(
+          *ctx->module, ptr_ty, false,
+          llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantPointerNull::get(ptr_ty),
+          name + "_cap_" + cap_name);
+      ctx->builder->restoreIP(saved_insert);
+      if (vi.is_ref) {
+        auto *ref_ptr = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
+        ctx->builder->CreateStore(ref_ptr, gv);
+      } else {
+        auto *el_ty = vi.alloca_ty;
+        auto *malloc_fn = declare_runtime_func("malloc", ptr_ty, {i64(c)});
+        auto *sz = llvm::ConstantExpr::getTruncOrBitCast(
+            llvm::ConstantExpr::getSizeOf(el_ty), i64(c));
+        auto *heap_ptr = ctx->builder->CreateCall(malloc_fn, {sz}, cap_name + "_boxed");
+        auto *val = ctx->builder->CreateLoad(el_ty, vi.ptr, cap_name + "_val");
+        ctx->builder->CreateStore(val, heap_ptr);
+        ctx->builder->CreateStore(heap_ptr, gv);
+      }
+      saved_insert = ctx->builder->saveIP();
+      capture_globals[cap_name] = gv;
+    }
+
+    ctx->builder->SetInsertPoint(
+        llvm::BasicBlock::Create(c, "entry", fn)
+    );
+
+    EnvGuard guard(*this, std::make_shared<Env>(env));
+
+    for (size_t i = 0; auto &arg: fn->args()) {
+      arg.setName(lambda.params[i].name);
+      auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr, lambda.params[i].name);
+      ctx->builder->CreateStore(&arg, a);
+      auto &pt = lambda.params[i].ty;
+      auto val_ty = llvm_type(pt);
+      bool is_ref = std::get_if<ast::Type::Ref>(&pt.data) != nullptr;
+      bool is_own = std::get_if<ast::Type::Own>(&pt.data) != nullptr;
+      if (is_ref) {
+        auto &ref = std::get<ast::Type::Ref>(pt.data);
+        val_ty = ref.inner ? llvm_type(*ref.inner) : val_ty;
+      } else if (is_own) {
+        auto &own = std::get<ast::Type::Own>(pt.data);
+        val_ty = own.inner ? llvm_type(*own.inner) : val_ty;
+      }
+      env->declare_var(lambda.params[i].name, a, arg.getType(), val_ty, is_ref, ptr_deref_chain(pt), is_own,
+                       llvm_func_type(pt));
+      ++i;
+    }
+
+    for (auto &[cap_name, gv] : capture_globals) {
+      auto vi = env->lookup_var(cap_name);
+      auto *ptr = ctx->builder->CreateLoad(llvm::PointerType::get(c, 0), gv, cap_name + "_ptr");
+      env->declare_var(cap_name, ptr, vi.alloca_ty, vi.value_ty, vi.is_ref, {}, vi.is_own, vi.func_ty);
+    }
+
+    if (lambda.body)
+      compile_block(*lambda.body);
+    if (!ctx->builder->GetInsertBlock()->getTerminator()) {
+      if (ret->isVoidTy())
+        ctx->builder->CreateRetVoid();
+      else
+        ctx->builder->CreateUnreachable();
+    }
+
+    ctx->builder->restoreIP(saved_insert);
+    current_function = saved_fn;
+    ctx->lambda_counter++;
+    return fn;
+  }
+
+  void IrEmitter::collect_free_vars(const StmtNode &stmt, const std::unordered_set<std::string> &params, std::unordered_set<std::string> &captured) {
+    std::visit(overload{
+        [&](const VarDefStmt &s) {
+          if (s.init) collect_free_vars_expr(*s.init, params, captured);
+        },
+        [&](const IfStmt &s) {
+          collect_free_vars_expr(s.condition, params, captured);
+          for (auto &st : s.then_branch->stmts) collect_free_vars(st, params, captured);
+          for (auto &[cond, blk] : s.elif_branch) {
+            collect_free_vars_expr(cond, params, captured);
+            for (auto &st2 : blk->stmts) collect_free_vars(st2, params, captured);
+          }
+          if (s.else_branch) for (auto &st2 : s.else_branch->stmts) collect_free_vars(st2, params, captured);
+        },
+        [&](const LoopStmt &s) {
+          collect_free_vars_expr(s.condition, params, captured);
+          for (auto &st : s.body->stmts) collect_free_vars(st, params, captured);
+        },
+        [&](const ExprStmt &s) { collect_free_vars_expr(s.expr, params, captured); },
+        [&](const ReturnStmt &s) { if (s.expr) collect_free_vars_expr(*s.expr, params, captured); },
+        [&](const BreakStmt &) {},
+        [&](const ContinueStmt &) {},
+        [&](const BlockStmt &s) { for (auto &st : s.block->stmts) collect_free_vars(st, params, captured); },
+    }, stmt.stmt);
+  }
+
+  void IrEmitter::collect_free_vars_expr(const ExprNode &expr, const std::unordered_set<std::string> &params, std::unordered_set<std::string> &captured) {
+    std::visit(overload{
+        [&](const Variable &v) {
+          if (params.find(v.name) == params.end()) captured.insert(v.name);
+        },
+        [&](const LiteralExpr &) {},
+        [&](const AssignExpr &a) {
+          collect_free_vars_expr(*a.target, params, captured);
+          collect_free_vars_expr(*a.value, params, captured);
+        },
+        [&](const BinaryExpr &b) {
+          collect_free_vars_expr(*b.lhs, params, captured);
+          collect_free_vars_expr(*b.rhs, params, captured);
+        },
+        [&](const UnaryExpr &u) { collect_free_vars_expr(*u.expr, params, captured); },
+        [&](const CallExpr &c) {
+          collect_free_vars_expr(*c.callee, params, captured);
+          for (auto &a : c.args) collect_free_vars_expr(*a, params, captured);
+        },
+        [&](const MemberExpr &m) { collect_free_vars_expr(*m.object, params, captured); },
+        [&](const IndexExpr &i) {
+          collect_free_vars_expr(*i.object, params, captured);
+          collect_free_vars_expr(*i.index, params, captured);
+        },
+        [&](const ListExpr &l) {
+          for (auto &e : l.elements) collect_free_vars_expr(*e, params, captured);
+        },
+        [&](const LambdaExpr &f) {},
+    }, expr.expr);
+  }
+
   // ── statements ──
 
   void IrEmitter::compile_block(const Block &block) {
@@ -414,8 +581,21 @@ namespace cat::ir {
 
               bool is_ref = s.ty && std::get_if<ast::Type::Ref>(&s.ty->data);
               bool is_own = s.ty && std::get_if<ast::Type::Own>(&s.ty->data);
+              llvm::FunctionType *func_ty = nullptr;
+              if (s.ty) {
+                func_ty = llvm_func_type(*s.ty);
+              } else if (iv && llvm::isa<llvm::Function>(iv)) {
+                auto *fn = llvm::cast<llvm::Function>(iv);
+                func_ty = fn->getFunctionType();
+              } else if (s.init && std::holds_alternative<CallExpr>(s.init->expr)) {
+                if (auto *sym = sema.get_symbol_table().resolve(s.name)) {
+                  if (sym->get_type().has_value()) {
+                    func_ty = llvm_func_type(*sym->get_type());
+                  }
+                }
+              }
               env->declare_var(s.name, a, vt, vt, is_ref, s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{}, is_own,
-                               s.ty ? llvm_func_type(*s.ty) : nullptr);
+                               func_ty);
 
               if (s.ty && std::get_if<ast::Type::Own>(&s.ty->data)) {
                 if (auto *var = std::get_if<Variable>(&s.init->expr))
@@ -560,6 +740,7 @@ namespace cat::ir {
             [&](const MemberExpr &e) { return compile_member_access(*e.object, e.field); },
             [&](const IndexExpr &e) { return compile_index(*e.object, *e.index); },
             [&](const ListExpr &e) { return emit_list_literal(e.elements, span); },
+            [&](const LambdaExpr &e) { return compile_lambda(e); },
         },
         expr
     );

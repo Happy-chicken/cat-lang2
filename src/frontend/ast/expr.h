@@ -1,10 +1,13 @@
 #pragma once
 
 #include "../../src/common/common.h"
+#include "type.h"
 #include <variant>
 namespace cat {
 
 struct ExprNode;
+
+struct Block;
 
 enum class BinaryOp { Add, Sub, Mul, Div, Eq, NotEq, Lt, Gt, Le, Ge, And, Or };
 
@@ -16,7 +19,11 @@ using Literal = std::variant<int64_t,    // Int
                              char,       // Char
                              std::string // StringLiteral
                              >;
-
+struct Parameter {
+  std::string name;
+  ast::Type ty;
+};
+  
 struct LiteralExpr {
   Literal lit;
 };
@@ -60,8 +67,21 @@ struct ListExpr {
   vector<uptr<ExprNode>> elements;
 };
 
+struct LambdaExpr {
+  vector<Parameter> params;
+  optional<ast::Type> return_type;
+  uptr<Block> body;
+
+  LambdaExpr() = default;
+  LambdaExpr(vector<Parameter> p, optional<ast::Type> r, uptr<Block> b);
+  ~LambdaExpr();
+  LambdaExpr(LambdaExpr&&) = default;
+  LambdaExpr& operator=(LambdaExpr&&) = default;
+};
+
 using Expr = std::variant<LiteralExpr, Variable, AssignExpr, BinaryExpr,
-                          UnaryExpr, CallExpr, MemberExpr, IndexExpr, ListExpr>;
+                          UnaryExpr, CallExpr, MemberExpr, IndexExpr, ListExpr,
+                          LambdaExpr>;
 
 struct ExprNode {
   Span span;
@@ -107,5 +127,7 @@ inline auto make_index(uptr<ExprNode> object, uptr<ExprNode> index) {
 inline auto make_list(vector<uptr<ExprNode>> elements) {
   return Expr{ListExpr{std::move(elements)}};
 }
+
+Expr make_lambda(vector<Parameter> params, optional<ast::Type> return_type, uptr<Block> body);
 
 } // namespace cat

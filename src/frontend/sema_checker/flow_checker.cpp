@@ -201,6 +201,10 @@ void FlowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag) {
             check_expr(*i.object, diag);
             check_expr(*i.index, diag);
           },
+          [&](const LambdaExpr &f) {
+            if (f.body)
+              analyze_block(*f.body, diag);
+          },
           [&](const auto &) {},
       },
       expr.expr);

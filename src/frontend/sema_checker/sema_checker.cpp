@@ -148,8 +148,21 @@ namespace cat {
                       auto class_sym = ctx.get_symbol_table().resolve(cv->name);
                       if (class_sym && std::holds_alternative<ClassData>(class_sym->get_kind())) {
                         var_ty = ast::Type(ast::Type::Class{cv->name});
+                      } else if (class_sym && std::holds_alternative<FunctionData>(class_sym->get_kind())) {
+                        auto &func_data = std::get<FunctionData>(class_sym->get_kind());
+                        var_ty = func_data.return_type.clone();
                       }
                     }
+                  }
+                  if (auto *func = std::get_if<LambdaExpr>(&var_def.init->expr)) {
+                    vector<uptr<ast::Type>> param_types;
+                    for (auto &pt : func->params) {
+                      param_types.push_back(std::make_unique<ast::Type>(pt.ty.clone()));
+                    }
+                    auto ret = func->return_type
+                                   ? std::make_unique<ast::Type>(func->return_type->clone())
+                                   : std::make_unique<ast::Type>(ast::Type::Void{});
+                    var_ty = ast::Type(ast::Type::Func{std::move(param_types), std::move(ret)});
                   }
                 }
               }
@@ -272,8 +285,12 @@ namespace cat {
             diag.error(span, "Function '" + func_name + "' is not declared")
                 .emit_to(diag);
           } else if (!sym->is_callable()) {
-            diag.error(span, "'" + func_name + "' is not callable")
-                .emit_to(diag);
+            bool is_untyped_var = std::holds_alternative<VariableData>(sym->get_kind()) &&
+                                  !sym->get_type().has_value();
+            if (!is_untyped_var) {
+              diag.error(span, "'" + func_name + "' is not callable")
+                  .emit_to(diag);
+            }
           } else {
             std::visit(overloaded{
               [&](const FunctionData& func_data) {
@@ -375,7 +392,20 @@ namespace cat {
         } }, [&](const ListExpr &list) {
         for (const auto &element : list.elements) {
           check_expr(*element, element->span, ctx, diag);
-        } }, [&](const auto &) {}
+        } }, [&](const LambdaExpr &lambda) {
+        ctx.get_symbol_table().enter_scope(ScopeKind::Function);
+        for (size_t i = 0; i < lambda.params.size(); ++i) {
+          auto &pt = lambda.params[i];
+          bool is_ref = std::get_if<ast::Type::Ref>(&pt.ty.data) != nullptr;
+          bool is_own = std::get_if<ast::Type::Own>(&pt.ty.data) != nullptr;
+          Symbol param_sym = Symbol::new_parameter(lambda.params[i].name, pt.ty.clone(), is_ref, is_own, span);
+          ctx.get_symbol_table().declare(std::move(param_sym));
+        }
+        for (auto &stmt : lambda.body->stmts) {
+          check_stmt(stmt, stmt.span, ctx, diag);
+        }
+        ctx.get_symbol_table().exit_scope();
+        }, [&](const auto &) {} 
                },
                expr.expr);
   }

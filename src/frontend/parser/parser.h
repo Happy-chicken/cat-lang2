@@ -77,5 +77,6 @@ private:
 
     error::ParseResult<std::vector<uptr<ExprNode>>> parse_arguments();
     error::ParseResult<ExprNode> finish_call(ExprNode callee);
+    error::ParseResult<ExprNode> parse_lambda();
   };
 }// namespace cat

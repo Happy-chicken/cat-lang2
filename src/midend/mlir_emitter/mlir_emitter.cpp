@@ -457,6 +457,9 @@ namespace cat::mmlir {
             [&](const IndexExpr &) -> mlir::Value {
               return {};
             },
+            [&](const LambdaExpr &) -> mlir::Value {
+              return {};
+            },
         },
         expr
     );
