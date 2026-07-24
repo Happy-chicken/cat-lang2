@@ -5,12 +5,6 @@
 #include <variant>
 
 namespace cat::semantics {
-template <class... Ts>
-struct overloaded : Ts... {
-  using Ts::operator()...;
-};
-template <class... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
 
 class TypeChecker : public semantics::Pass {
 public:

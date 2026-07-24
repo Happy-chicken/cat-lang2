@@ -2,82 +2,87 @@
 
 namespace cat {
 
-  Symbol::Symbol(SymbolKind kind, string name, optional<ast::Type> ty, size_t scope_depth, Span span)
-      : kind(std::move(kind)), name(std::move(name)), type(std::move(ty)),
-        scope_depth(scope_depth), span_(span) {}
+Symbol::Symbol(SymbolKind kind, string name, optional<ast::Type> ty,
+               size_t scope_depth, Span span)
+    : kind(std::move(kind)), name(std::move(name)), type(std::move(ty)),
+      scope_depth(scope_depth), span_(span) {}
 
-  Symbol Symbol::new_variable(string name, optional<ast::Type> ty, bool is_mutable, Span span, bool is_ref, bool is_own, optional<size_t> list_len) {
-    VariableData data{is_mutable, false, is_ref, is_own, std::move(list_len)};
-    SymbolKind kind = std::move(data);
-    return Symbol(std::move(kind), std::move(name), std::move(ty), 0, span);
+Symbol Symbol::new_variable(string name, optional<ast::Type> ty,
+                            bool is_mutable, Span span, bool is_ref,
+                            bool is_own, optional<size_t> list_len) {
+  VariableData data{is_mutable, false, is_ref, is_own, std::move(list_len)};
+  SymbolKind kind = std::move(data);
+  return Symbol(std::move(kind), std::move(name), std::move(ty), 0, span);
+}
+
+Symbol Symbol::new_function(string name, vector<ast::Type> params,
+                            ast::Type return_type, Span span) {
+  FunctionData data{std::move(params), std::move(return_type)};
+  SymbolKind kind = std::move(data);
+  return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
+}
+
+Symbol Symbol::new_parameter(string name, ast::Type ty, bool is_ref,
+                             bool is_own, Span span) {
+  ParameterData data{is_ref, is_own};
+  SymbolKind kind = std::move(data);
+  return Symbol(std::move(kind), std::move(name), std::move(ty), 0, span);
+}
+
+Symbol Symbol::new_type(string name, Span span) {
+  SymbolKind kind = TypeData{};
+  return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
+}
+
+Symbol Symbol::new_class(string name,
+                         vector<std::pair<string, ast::Type>> fields,
+                         vector<bool> has_default, Span span) {
+  ClassData data{std::move(fields), std::move(has_default)};
+  SymbolKind kind = std::move(data);
+  return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
+}
+
+Symbol Symbol::new_trait(string name, vector<string> methods, Span span) {
+  TraitData data{std::move(methods)};
+  SymbolKind kind = std::move(data);
+  return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
+}
+
+bool Symbol::is_callable() const {
+  if (type.has_value() && std::holds_alternative<ast::Type::Func>(type->data)) {
+    return true;
   }
+  return std::visit(
+      [](const auto &v) -> bool {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, FunctionData> ||
+                      std::is_same_v<T, ClassData>) {
+          return true;
+        }
+        return false;
+      },
+      kind);
+}
 
-  Symbol Symbol::new_function(string name, vector<ast::Type> params, ast::Type return_type, Span span) {
-    FunctionData data{std::move(params), std::move(return_type)};
-    SymbolKind kind = std::move(data);
-    return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
-  }
+const char *Symbol::kindname() const {
+  return std::visit(
+      [](const auto &v) -> const char * {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, VariableData>)
+          return "variable";
+        if constexpr (std::is_same_v<T, FunctionData>)
+          return "function";
+        if constexpr (std::is_same_v<T, TypeData>)
+          return "type";
+        if constexpr (std::is_same_v<T, ParameterData>)
+          return "parameter";
+        if constexpr (std::is_same_v<T, ClassData>)
+          return "class";
+        if constexpr (std::is_same_v<T, TraitData>)
+          return "trait";
+        return "unknown";
+      },
+      kind);
+}
 
-  Symbol Symbol::new_parameter(string name, ast::Type ty, bool is_ref, bool is_own, Span span) {
-    ParameterData data{is_ref, is_own};
-    SymbolKind kind = std::move(data);
-    return Symbol(std::move(kind), std::move(name), std::move(ty), 0, span);
-  }
-
-  Symbol Symbol::new_type(string name, Span span) {
-    SymbolKind kind = TypeData{};
-    return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
-  }
-
-  Symbol Symbol::new_class(string name, vector<std::pair<string, ast::Type>> fields, vector<bool> has_default, Span span) {
-    ClassData data{std::move(fields), std::move(has_default)};
-    SymbolKind kind = std::move(data);
-    return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
-  }
-
-  Symbol Symbol::new_trait(string name, vector<string> methods, Span span) {
-    TraitData data{std::move(methods)};
-    SymbolKind kind = std::move(data);
-    return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
-  }
-
-  bool Symbol::is_callable() const {
-    if (type.has_value() && std::holds_alternative<ast::Type::Func>(type->data)) {
-      return true;
-    }
-    return std::visit(
-        [](const auto &v) -> bool {
-          using T = std::decay_t<decltype(v)>;
-          if constexpr (std::is_same_v<T, FunctionData> ||
-                        std::is_same_v<T, ClassData>) {
-            return true;
-          }
-          return false;
-        },
-        kind
-    );
-  }
-
-  const char *Symbol::kindname() const {
-    return std::visit(
-        [](const auto &v) -> const char * {
-          using T = std::decay_t<decltype(v)>;
-          if constexpr (std::is_same_v<T, VariableData>)
-            return "variable";
-          if constexpr (std::is_same_v<T, FunctionData>)
-            return "function";
-          if constexpr (std::is_same_v<T, TypeData>)
-            return "type";
-          if constexpr (std::is_same_v<T, ParameterData>)
-            return "parameter";
-          if constexpr (std::is_same_v<T, ClassData>)
-            return "class";
-          if constexpr (std::is_same_v<T, TraitData>)
-            return "trait";
-          return "unknown";
-        },
-        kind
-    );
-  }
-
-}// namespace cat
+} // namespace cat

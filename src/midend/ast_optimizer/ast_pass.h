@@ -7,8 +7,7 @@
 
 namespace cat::opt::ast {
 
-template <typename Derived>
-class ASTPass {
+template <typename Derived> class ASTPass {
 public:
   void run(Program &program) {
     auto &self = static_cast<Derived &>(*this);
@@ -47,15 +46,13 @@ private:
             }
           }
         },
-        node.item
-    );
+        node.item);
   }
 };
 
 // ---------- out-of-line definitions ----------
 
-template <typename Derived>
-void ASTPass<Derived>::walk_block(Block &block) {
+template <typename Derived> void ASTPass<Derived>::walk_block(Block &block) {
   auto &self = static_cast<Derived &>(*this);
   for (auto &stmt : block.stmts) {
     walk_stmt(stmt);
@@ -63,14 +60,14 @@ void ASTPass<Derived>::walk_block(Block &block) {
   self.on_block(block);
 }
 
-template <typename Derived>
-void ASTPass<Derived>::walk_stmt(StmtNode &node) {
+template <typename Derived> void ASTPass<Derived>::walk_stmt(StmtNode &node) {
   auto &self = static_cast<Derived &>(*this);
   std::visit(
       [&](auto &stmt) {
         using T = std::decay_t<decltype(stmt)>;
         if constexpr (std::is_same_v<T, VarDefStmt>) {
-          if (stmt.init) walk_expr(stmt.init->expr);
+          if (stmt.init)
+            walk_expr(stmt.init->expr);
         } else if constexpr (std::is_same_v<T, IfStmt>) {
           self.on_if_stmt(stmt);
           walk_expr(stmt.condition.expr);
@@ -79,24 +76,24 @@ void ASTPass<Derived>::walk_stmt(StmtNode &node) {
             walk_expr(cond.expr);
             walk_block(*block);
           }
-          if (stmt.else_branch) walk_block(*stmt.else_branch);
+          if (stmt.else_branch)
+            walk_block(*stmt.else_branch);
         } else if constexpr (std::is_same_v<T, LoopStmt>) {
           walk_expr(stmt.condition.expr);
           walk_block(*stmt.body);
         } else if constexpr (std::is_same_v<T, ReturnStmt>) {
-          if (stmt.expr) walk_expr(stmt.expr->expr);
+          if (stmt.expr)
+            walk_expr(stmt.expr->expr);
         } else if constexpr (std::is_same_v<T, ExprStmt>) {
           walk_expr(stmt.expr.expr);
         } else if constexpr (std::is_same_v<T, BlockStmt>) {
           walk_block(*stmt.block);
         }
       },
-      node.stmt
-  );
+      node.stmt);
 }
 
-template <typename Derived>
-void ASTPass<Derived>::walk_expr(Expr &expr) {
+template <typename Derived> void ASTPass<Derived>::walk_expr(Expr &expr) {
   auto &self = static_cast<Derived &>(*this);
   std::visit(
       [&](auto &e) {
@@ -113,18 +110,19 @@ void ASTPass<Derived>::walk_expr(Expr &expr) {
           walk_expr(e.value->expr);
         } else if constexpr (std::is_same_v<T, CallExpr>) {
           walk_expr(e.callee->expr);
-          for (auto &arg : e.args) walk_expr(arg->expr);
+          for (auto &arg : e.args)
+            walk_expr(arg->expr);
         } else if constexpr (std::is_same_v<T, MemberExpr>) {
           walk_expr(e.object->expr);
         } else if constexpr (std::is_same_v<T, IndexExpr>) {
           walk_expr(e.object->expr);
           walk_expr(e.index->expr);
         } else if constexpr (std::is_same_v<T, ListExpr>) {
-          for (auto &elem : e.elements) walk_expr(elem->expr);
+          for (auto &elem : e.elements)
+            walk_expr(elem->expr);
         }
       },
-      expr
-  );
+      expr);
 }
 
-}// namespace cat::opt::ast
+} // namespace cat::opt::ast

@@ -23,7 +23,7 @@ struct Parameter {
   std::string name;
   ast::Type ty;
 };
-  
+
 struct LiteralExpr {
   Literal lit;
 };
@@ -75,13 +75,13 @@ struct LambdaExpr {
   LambdaExpr() = default;
   LambdaExpr(vector<Parameter> p, optional<ast::Type> r, uptr<Block> b);
   ~LambdaExpr();
-  LambdaExpr(LambdaExpr&&) = default;
-  LambdaExpr& operator=(LambdaExpr&&) = default;
+  LambdaExpr(LambdaExpr &&) = default;
+  LambdaExpr &operator=(LambdaExpr &&) = default;
 };
 
-using Expr = std::variant<LiteralExpr, Variable, AssignExpr, BinaryExpr,
-                          UnaryExpr, CallExpr, MemberExpr, IndexExpr, ListExpr,
-                          LambdaExpr>;
+using Expr =
+    std::variant<LiteralExpr, Variable, AssignExpr, BinaryExpr, UnaryExpr,
+                 CallExpr, MemberExpr, IndexExpr, ListExpr, LambdaExpr>;
 
 struct ExprNode {
   Span span;
@@ -128,6 +128,7 @@ inline auto make_list(vector<uptr<ExprNode>> elements) {
   return Expr{ListExpr{std::move(elements)}};
 }
 
-Expr make_lambda(vector<Parameter> params, optional<ast::Type> return_type, uptr<Block> body);
+Expr make_lambda(vector<Parameter> params, optional<ast::Type> return_type,
+                 uptr<Block> body);
 
 } // namespace cat

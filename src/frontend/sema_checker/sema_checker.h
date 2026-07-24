@@ -1,15 +1,8 @@
 #pragma once
 #include "pass_interface.h"
 #include "resolver.h"
-#include <variant>
 
 namespace cat {
-  template<class... Ts>
-  struct overloaded : Ts... {
-    using Ts::operator()...;
-  };
-  template<class... Ts>
-  overloaded(Ts...) -> overloaded<Ts...>;
   class SemaChecker : public semantics::Pass {
 public:
     const char *name() const noexcept override { return "SemaChecker"; }

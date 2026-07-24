@@ -28,7 +28,8 @@ void AndersenGraph::build(const llvm::Function &func) {
       }
 
       if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&inst)) {
-        if (!is_ptr_val(&inst)) continue;
+        if (!is_ptr_val(&inst))
+          continue;
         auto *ptr = load->getPointerOperand();
         auto *base_ptr = trace_to_base(ptr);
 

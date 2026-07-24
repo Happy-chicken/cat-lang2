@@ -39,4 +39,4 @@ inline void set_expr(uptr<ExprNode> &node, Expr &&e) {
   node->expr = std::move(e);
 }
 
-} // namespace cat::midend
+} // namespace cat::opt::ast

@@ -1,12 +1,12 @@
 #pragma once
 
+#include "ast_pass.h"
 #include "item.h"
+#include <concepts>
 #include <functional>
 #include <memory>
 #include <type_traits>
 #include <vector>
-#include <concepts>
-#include "ast_pass.h"
 
 namespace cat::opt::ast {
 
@@ -18,10 +18,10 @@ concept HasRun = requires(T &t, Program &p) {
 class PassManager {
 public:
   template <typename Pass, typename... Args>
-    requires std::is_base_of_v<
-        ASTPass<Pass>, Pass> || requires(Pass &&p, Program &prog) {
-      { p.run(prog) } -> std::same_as<void>;
-    }
+    requires std::is_base_of_v<ASTPass<Pass>, Pass> ||
+             requires(Pass &&p, Program &prog) {
+               { p.run(prog) } -> std::same_as<void>;
+             }
   void add_pass(Args &&...args) {
     auto pass = std::make_shared<Pass>(std::forward<Args>(args)...);
     passes.push_back([pass](Program &program) { pass->run(program); });

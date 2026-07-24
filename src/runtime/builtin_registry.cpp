@@ -2,21 +2,23 @@
 namespace cat::runtime {
 
 void BuiltinRegistry::register_type(const std::string &tag,
-                                     std::vector<BuiltinMethodDesc> methods) {
+                                    std::vector<BuiltinMethodDesc> methods) {
   for (auto &m : methods) {
     methods_[{tag, m.name}] = std::move(m);
   }
 }
 
 std::optional<std::reference_wrapper<const BuiltinMethodDesc>>
-BuiltinRegistry::lookup(const std::string &tag, const std::string &method) const {
+BuiltinRegistry::lookup(const std::string &tag,
+                        const std::string &method) const {
   auto it = methods_.find({tag, method});
-  if (it == methods_.end()) return std::nullopt;
+  if (it == methods_.end())
+    return std::nullopt;
   return std::cref(it->second);
 }
 
 bool BuiltinRegistry::is_method_declared(const std::string &tag,
-                                          const std::string &method) const {
+                                         const std::string &method) const {
   return methods_.find({tag, method}) != methods_.end();
 }
 
@@ -25,4 +27,4 @@ void BuiltinRegistry::init_defaults() {
   register_list_builtins(*this);
 }
 
-}// namespace cat::runtime
+} // namespace cat::runtime

@@ -10,21 +10,21 @@
 #include <vector>
 
 namespace llvm {
-  class Function;
-  class Type;
-  class Value;
-  class StructType;
-}// namespace llvm
+class Function;
+class Type;
+class Value;
+class StructType;
+} // namespace llvm
 
 namespace cat {
-  namespace error {
-    class DiagCtxt;
-  }
-  namespace semantics {
-    class Type;
-  }
-  struct Span;
-}// namespace cat
+namespace error {
+class DiagCtxt;
+}
+namespace semantics {
+class Type;
+}
+struct Span;
+} // namespace cat
 
 namespace cat::runtime {
 
@@ -54,9 +54,8 @@ struct BuiltinMethodDesc {
 
 class BuiltinRegistry {
 public:
-  void
-  register_type(const std::string &tag,
-                std::vector<BuiltinMethodDesc> methods);
+  void register_type(const std::string &tag,
+                     std::vector<BuiltinMethodDesc> methods);
 
   std::optional<std::reference_wrapper<const BuiltinMethodDesc>>
   lookup(const std::string &tag, const std::string &method) const;
@@ -82,4 +81,4 @@ private:
   std::unordered_map<Key, BuiltinMethodDesc, KeyHash> methods_;
 };
 
-}// namespace cat::runtime
+} // namespace cat::runtime

@@ -10,7 +10,8 @@ AndersenSolver::AndersenSolver(const llvm::Function &func) {
 }
 
 void AndersenSolver::solve() {
-  for (auto *v : graph.nodes) pts[v];
+  for (auto *v : graph.nodes)
+    pts[v];
 
   std::deque<const llvm::Value *> worklist;
 

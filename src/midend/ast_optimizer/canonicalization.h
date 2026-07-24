@@ -25,4 +25,4 @@ public:
   }
 };
 
-}// namespace cat::opt::ast
+} // namespace cat::opt::ast

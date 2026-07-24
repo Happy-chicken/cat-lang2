@@ -10,54 +10,60 @@
 
 namespace cat::opt::ana {
 
-  using ValueSet = llvm::DenseSet<const llvm::Value *>;
+using ValueSet = llvm::DenseSet<const llvm::Value *>;
 
-  struct BlockInfo {
-    uint32_t id;
-    const llvm::BasicBlock *bb;
-    ValueSet def;
-    ValueSet use;
-    vector<uint32_t> succ;
-  };
+struct BlockInfo {
+  uint32_t id;
+  const llvm::BasicBlock *bb;
+  ValueSet def;
+  ValueSet use;
+  vector<uint32_t> succ;
+};
 
-  struct CFG {
-    vector<BlockInfo> blocks;
-    uint32_t entry = 0;
-    uint32_t exit = 0;
+struct CFG {
+  vector<BlockInfo> blocks;
+  uint32_t entry = 0;
+  uint32_t exit = 0;
 
-    uint32_t size() const { return static_cast<uint32_t>(blocks.size()); }
-    vector<uint32_t> predecessors(uint32_t id) const {
-      vector<uint32_t> preds;
-      for (auto &b: blocks)
-        for (auto s: b.succ)
-          if (s == id) preds.push_back(b.id);
-      return preds;
-    }
-  };
+  uint32_t size() const { return static_cast<uint32_t>(blocks.size()); }
+  vector<uint32_t> predecessors(uint32_t id) const {
+    vector<uint32_t> preds;
+    for (auto &b : blocks)
+      for (auto s : b.succ)
+        if (s == id)
+          preds.push_back(b.id);
+    return preds;
+  }
+};
 
-  struct FunctionAnalysisData {
-    ValueSet alloca_names;
-    llvm::DenseMap<const llvm::Value *, const llvm::Value *> load2alloca;
-    llvm::DenseMap<const llvm::Value *, const llvm::Value *> def2alloca;
-    vector<ValueSet> block_expressions;
-    ValueSet all_expressions;
-    vector<ValueSet> block_defs;
-  };
+struct FunctionAnalysisData {
+  ValueSet alloca_names;
+  llvm::DenseMap<const llvm::Value *, const llvm::Value *> load2alloca;
+  llvm::DenseMap<const llvm::Value *, const llvm::Value *> def2alloca;
+  vector<ValueSet> block_expressions;
+  ValueSet all_expressions;
+  vector<ValueSet> block_defs;
+};
 
-  class AnalysisCtxt {
+class AnalysisCtxt {
 public:
-    explicit AnalysisCtxt(const llvm::Module &module);
+  explicit AnalysisCtxt(const llvm::Module &module);
 
-    const unordered_map<string, CFG> &get_cfgs() const { return cfgs; }
-    const unordered_map<string, uptr<FunctionAnalysisData>> &get_func_data() const { return func_data; }
+  const unordered_map<string, CFG> &get_cfgs() const { return cfgs; }
+  const unordered_map<string, uptr<FunctionAnalysisData>> &
+  get_func_data() const {
+    return func_data;
+  }
 
 private:
-    CFG build_cfg(const llvm::Function &func, FunctionAnalysisData &fdata);
-    void extract_block_def_use(const llvm::BasicBlock &bb, ValueSet &def, ValueSet &use);
-    vector<uint32_t> get_successor_indices(const llvm::BasicBlock &bb, const vector<BlockInfo> &blocks);
+  CFG build_cfg(const llvm::Function &func, FunctionAnalysisData &fdata);
+  void extract_block_def_use(const llvm::BasicBlock &bb, ValueSet &def,
+                             ValueSet &use);
+  vector<uint32_t> get_successor_indices(const llvm::BasicBlock &bb,
+                                         const vector<BlockInfo> &blocks);
 
-    unordered_map<string, CFG> cfgs;
-    unordered_map<string, uptr<FunctionAnalysisData>> func_data;
-  };
+  unordered_map<string, CFG> cfgs;
+  unordered_map<string, uptr<FunctionAnalysisData>> func_data;
+};
 
-}// namespace cat::opt::ana
+} // namespace cat::opt::ana

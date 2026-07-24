@@ -4,15 +4,8 @@
 #include "type.h"
 #include "unifier.h"
 #include <memory>
-#include <variant>
 
 namespace cat::semantics {
-  template<class... Ts>
-  struct overloaded : Ts... {
-    using Ts::operator()...;
-  };
-  template<class... Ts>
-  overloaded(Ts...) -> overloaded<Ts...>;
 
   Type Inferer::ast_type_to_semantic_type(const ast::Type &ast_type) {
     return std::visit(

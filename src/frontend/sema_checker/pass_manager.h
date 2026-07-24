@@ -7,29 +7,29 @@
 
 namespace cat::semantics {
 
-  class PassManager {
+class PassManager {
 public:
-    PassManager() : ctx{} {}
+  PassManager() : ctx{} {}
 
-    void add_pass(uptr<semantics::Pass> pass) {
-      passes.push_back(std::move(pass));
-    }
+  void add_pass(uptr<semantics::Pass> pass) {
+    passes.push_back(std::move(pass));
+  }
 
-    bool run(Program &program, error::DiagCtxt &diag) {
-      bool ok = true;
-      for (auto &pass: passes) {
-        if (!pass->run(program, ctx, diag)) {
-          ok = false;
-        }
+  bool run(Program &program, error::DiagCtxt &diag) {
+    bool ok = true;
+    for (auto &pass : passes) {
+      if (!pass->run(program, ctx, diag)) {
+        ok = false;
       }
-      return ok;
     }
+    return ok;
+  }
 
-    semantics::SemaCtxt &get_sema_ctxt() { return ctx; }
+  semantics::SemaCtxt &get_sema_ctxt() { return ctx; }
 
 private:
-    vector<uptr<semantics::Pass>> passes;
-    semantics::SemaCtxt ctx;
-  };
+  vector<uptr<semantics::Pass>> passes;
+  semantics::SemaCtxt ctx;
+};
 
-}// namespace cat
+} // namespace cat::semantics

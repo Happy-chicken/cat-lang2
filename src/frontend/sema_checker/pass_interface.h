@@ -1,20 +1,21 @@
 #pragma once
 namespace cat {
-  class Program;
+class Program;
 }
 namespace cat::error {
-  class DiagCtxt;
+class DiagCtxt;
 }
 namespace cat::semantics {
 
-  class SemaCtxt;
+class SemaCtxt;
 
-  class Pass {
+class Pass {
 public:
-    virtual ~Pass() = default;
+  virtual ~Pass() = default;
 
-    virtual const char *name() const noexcept = 0;
-    virtual bool run(::cat::Program &program, SemaCtxt &ctx, ::cat::error::DiagCtxt &diag) = 0;
-  };
+  virtual const char *name() const noexcept = 0;
+  virtual bool run(::cat::Program &program, SemaCtxt &ctx,
+                   ::cat::error::DiagCtxt &diag) = 0;
+};
 
-}// namespace cat::semantics
+} // namespace cat::semantics

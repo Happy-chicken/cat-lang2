@@ -10,7 +10,8 @@ public:
   void on_function(FunctionDef &fn) { walk_block(fn.body); }
 
   void on_unary(Expr &parent, UnaryExpr &unary) {
-    if (unary.op != UnaryOp::Not) return;
+    if (unary.op != UnaryOp::Not)
+      return;
 
     if (auto *inner = std::get_if<UnaryExpr>(&unary.expr->expr)) {
       if (inner->op == UnaryOp::Not) {
@@ -26,4 +27,4 @@ public:
   }
 };
 
-}// namespace cat::opt::ast
+} // namespace cat::opt::ast

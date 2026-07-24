@@ -3,13 +3,9 @@
 
 namespace cat {
 
-SymbolTable::SymbolTable() {
-  scopes.emplace_back(ScopeKind::Global);
-}
+SymbolTable::SymbolTable() { scopes.emplace_back(ScopeKind::Global); }
 
-void SymbolTable::enter_scope(ScopeKind kind) {
-  scopes.emplace_back(kind);
-}
+void SymbolTable::enter_scope(ScopeKind kind) { scopes.emplace_back(kind); }
 
 void SymbolTable::exit_scope() {
   assert(scopes.size() >= 2 && "Cannot pop the global scope");
@@ -33,13 +29,15 @@ Symbol *SymbolTable::resolve(const string &name) const {
 }
 
 Symbol *SymbolTable::resolve_global(const string &name) const {
-  if (scopes.empty()) return nullptr;
+  if (scopes.empty())
+    return nullptr;
   return scopes.front().get(name).get();
 }
 
 bool SymbolTable::nearest_of_kind(ScopeKind kind) const {
   for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-    if (it->kind == kind) return true;
+    if (it->kind == kind)
+      return true;
   }
   return false;
 }
