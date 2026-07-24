@@ -64,6 +64,8 @@ include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/common)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/backend)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/runtime)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/types)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/ast)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/lexer)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/parser)
@@ -81,6 +83,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer/passes)
 file(GLOB_RECURSE SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/common/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/backend/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/types/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/ast/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/lexer/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/parser/*.cpp"

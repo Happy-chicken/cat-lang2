@@ -141,6 +141,9 @@ namespace cat {
               if (var_def.init.has_value()) {
                 if (auto *list = std::get_if<ListExpr>(&var_def.init->expr)) {
                   list_len = list->elements.size();
+                  if (!var_ty.has_value()) {
+                    var_ty = ast::type_list(ast::Type{});
+                  }
                 }
                 if (!var_ty.has_value()) {
                   if (auto *call = std::get_if<CallExpr>(&var_def.init->expr)) {
@@ -268,76 +271,102 @@ namespace cat {
         if (!func_name.empty()) {
           string resolved_name = func_name;
           bool is_method = std::holds_alternative<MemberExpr>(call.callee->expr);
+          bool is_builtin = false;
           if (is_method) {
             auto &member = std::get<MemberExpr>(call.callee->expr);
             if (auto *var = std::get_if<Variable>(&member.object->expr)) {
               auto obj_sym = ctx.get_symbol_table().resolve(var->name);
               if (obj_sym && obj_sym->get_type().has_value()) {
                 auto &ty = *obj_sym->get_type();
-                if (auto *cls = std::get_if<ast::Type::Class>(&ty.data)) {
+                if (std::get_if<ast::Type::List>(&ty.data)) {
+                  auto &reg = ctx.get_builtins();
+                  if (reg.is_method_declared("list", func_name)) {
+                    is_builtin = true;
+                  } else {
+                    diag.error(span, "Unknown list method '" + func_name + "'")
+                        .emit_to(diag);
+                  }
+                } else if (auto *cls = std::get_if<ast::Type::Class>(&ty.data)) {
                   resolved_name = cls->name + "_" + func_name;
                 }
               }
             }
           }
-          auto sym = ctx.get_symbol_table().resolve(resolved_name);
-          if (!sym) {
-            diag.error(span, "Function '" + func_name + "' is not declared")
-                .emit_to(diag);
-          } else if (!sym->is_callable()) {
-            bool is_untyped_var = std::holds_alternative<VariableData>(sym->get_kind()) &&
-                                  !sym->get_type().has_value();
-            if (!is_untyped_var) {
-              diag.error(span, "'" + func_name + "' is not callable")
+          if (is_builtin) {
+            auto &reg = ctx.get_builtins();
+            auto desc = reg.lookup("list", func_name);
+            if (desc && call.args.size() != desc->get().arity) {
+              diag.error(span, "'" + func_name + "' expects " + std::to_string(desc->get().arity) + " arguments, got " + std::to_string(call.args.size()))
                   .emit_to(diag);
             }
+            if ((func_name == "push" || func_name == "pop") && is_method) {
+              auto &member = std::get<MemberExpr>(call.callee->expr);
+              if (auto *var = std::get_if<Variable>(&member.object->expr)) {
+                if (auto *sym = ctx.get_symbol_table().resolve(var->name)) {
+                  sym->clear_known_list_len();
+                }
+              }
+            }
           } else {
-            std::visit(overloaded{
-              [&](const FunctionData& func_data) {
-                int expected_args = func_data.params.size();
-                if (is_method) {
-                  expected_args = std::max(static_cast<int>(expected_args) - 1, 0);
-                }
-                if (expected_args != static_cast<int>(call.args.size())) {
-                  diag.error(span, "Function '" 
-                                        + func_name 
-                                        + "' expects " 
-                                        + std::to_string(expected_args) 
-                                        + " arguments, but " 
-                                        + std::to_string(call.args.size()) 
-                                        + " were provided")
-                      .emit_to(diag);
-                }
-              },
-              [&](const ClassData& class_data) {
-                size_t required = 0;
-                for (bool has_def : class_data.has_default)
-                  if (!has_def) ++required;
-                if (call.args.size() < required || call.args.size() > class_data.fields.size()) {
-                  diag.error(span, "Class '" 
-                                        + func_name 
-                                        + "' expects " 
-                                        + std::to_string(required)
-                                        + " to " 
-                                        + std::to_string(class_data.fields.size())
-                                        + " arguments, but " 
-                                        + std::to_string(call.args.size()) 
-                                        + " were provided")
-                      .emit_to(diag);
-                }
-              },
-              [&](const auto& data) {
-                if (sym->get_type().has_value()) {
-                  if (auto *func_ty = std::get_if<ast::Type::Func>(&sym->get_type()->data)) {
-                    int expected_args = static_cast<int>(func_ty->params.size());
-                    if (expected_args != static_cast<int>(call.args.size())) {
-                      diag.error(span, "Function '" + func_name + "' expects " + std::to_string(expected_args) + " arguments, but " + std::to_string(call.args.size()) + " were provided")
-                          .emit_to(diag);
+            auto sym = ctx.get_symbol_table().resolve(resolved_name);
+            if (!sym) {
+              diag.error(span, "Function '" + func_name + "' is not declared")
+                  .emit_to(diag);
+            } else if (!sym->is_callable()) {
+              bool is_untyped_var = std::holds_alternative<VariableData>(sym->get_kind()) &&
+                                    !sym->get_type().has_value();
+              if (!is_untyped_var) {
+                diag.error(span, "'" + func_name + "' is not callable")
+                    .emit_to(diag);
+              }
+            } else {
+              std::visit(overloaded{
+                [&](const FunctionData& func_data) {
+                  int expected_args = func_data.params.size();
+                  if (is_method) {
+                    expected_args = std::max(static_cast<int>(expected_args) - 1, 0);
+                  }
+                  if (expected_args != static_cast<int>(call.args.size())) {
+                    diag.error(span, "Function '" 
+                                          + func_name 
+                                          + "' expects " 
+                                          + std::to_string(expected_args) 
+                                          + " arguments, but " 
+                                          + std::to_string(call.args.size()) 
+                                          + " were provided")
+                        .emit_to(diag);
+                  }
+                },
+                [&](const ClassData& class_data) {
+                  size_t required = 0;
+                  for (bool has_def : class_data.has_default)
+                    if (!has_def) ++required;
+                  if (call.args.size() < required || call.args.size() > class_data.fields.size()) {
+                    diag.error(span, "Class '" 
+                                          + func_name 
+                                          + "' expects " 
+                                          + std::to_string(required)
+                                          + " to " 
+                                          + std::to_string(class_data.fields.size())
+                                          + " arguments, but " 
+                                          + std::to_string(call.args.size()) 
+                                          + " were provided")
+                        .emit_to(diag);
+                  }
+                },
+                [&](const auto& data) {
+                  if (sym->get_type().has_value()) {
+                    if (auto *func_ty = std::get_if<ast::Type::Func>(&sym->get_type()->data)) {
+                      int expected_args = static_cast<int>(func_ty->params.size());
+                      if (expected_args != static_cast<int>(call.args.size())) {
+                        diag.error(span, "Function '" + func_name + "' expects " + std::to_string(expected_args) + " arguments, but " + std::to_string(call.args.size()) + " were provided")
+                            .emit_to(diag);
+                      }
                     }
                   }
-                }
-              },
-            }, sym->get_kind());
+                },
+              }, sym->get_kind());
+            }
           }
         }
         for (const auto &arg : call.args) {

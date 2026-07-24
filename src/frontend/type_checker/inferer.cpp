@@ -467,6 +467,19 @@ namespace cat::semantics {
         infer_expr(member.object->expr, member.object->span, ctxt, diag);
     Type resolved = ctxt.get_type_ctxt().resolve_type(obj_ty);
 
+    if (auto *list_ty = std::get_if<Type::List>(&resolved.get_data())) {
+      auto elem = list_ty->inner ? list_ty->inner->clone() : Type::error();
+
+      auto desc = ctxt.get_builtins().lookup("list", member.field);
+      if (desc) {
+        return desc->get().build_func_type(elem);
+      }
+
+      diag.error(span, "Unknown list method '" + member.field + "'")
+          .emit_to(diag);
+      return Type::error();
+    }
+
     if (auto *cls = std::get_if<Type::Class>(&resolved.get_data())) {
       auto sym = ctxt.get_symbol_table().resolve_global(cls->name);
       if (!sym) {

@@ -1,5 +1,6 @@
 #pragma once
 #include "../../frontend/ast/type.h"
+#include "builtin_registry.h"
 #include "codegen_ctx.h"
 #include "common.h"
 #include "diag.h"
@@ -46,6 +47,16 @@ public:
     llvm::Value *compile_index_ptr(const ExprNode &expr_node);
     void emit_bounds_check(llvm::Value *index, llvm::Value *len, Span span);
     llvm::Value *compile_assignment(const AssignExpr &assign_expr);
+
+    ListType *lookup_or_create_list_type(llvm::Type *elem_ty);
+    ListType *lookup_list_type_by_struct(llvm::StructType *st);
+
+    llvm::Value *emit_builtin_method(const runtime::BuiltinMethodDesc &desc,
+                                     ListType *lt, llvm::StructType *st,
+                                     const ExprNode &obj_expr,
+                                     const vector<uptr<ExprNode>> &args,
+                                     Span span);
+
     llvm::Value *compile_member_access(const ExprNode &object, const string &name);
     llvm::Value *compile_member_ptr(const ExprNode &expr_node);
     llvm::Value *compile_literal(const LiteralExpr &lit);

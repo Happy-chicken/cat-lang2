@@ -36,6 +36,8 @@ static int compile_and_run(const string &source) {
 
     cat::jit::JIT jit(diag);
     jit.add_symbol("malloc", reinterpret_cast<void *>(&malloc));
+    jit.add_symbol("memcpy", reinterpret_cast<void *>(&memcpy));
+    jit.add_symbol("free", reinterpret_cast<void *>(&free));
     jit.add_module(emitter);
     return jit.run();
 }
@@ -131,6 +133,65 @@ TEST(Integration, NestedList) {
             return m[0][1] + m[1][0] + m[2][1];
         }
     )"), 107);
+}
+
+TEST(Integration, ListLen) {
+    EXPECT_EQ(compile_and_run(R"(
+        fn main()->int { let xs = [10, 20, 30]; return xs.len(); }
+    )"), 3);
+}
+
+TEST(Integration, ListLenEmpty) {
+    EXPECT_EQ(compile_and_run(R"(
+        fn main()->int { let xs: list<int> = []; return xs.len(); }
+    )"), 0);
+}
+
+TEST(Integration, ListPush) {
+    EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let xs = [1];
+            xs.push(2);
+            xs.push(3);
+            return xs[0] + xs[1] + xs[2];
+        }
+    )"), 6);
+}
+
+TEST(Integration, ListPushGrow) {
+    EXPECT_EQ(compile_and_run(R"(
+        fn main()->int { let xs: list<int> = []; let i = 0; while i < 10 { xs.push(i); i = i + 1; } return xs.len(); }
+    )"), 10);
+}
+
+TEST(Integration, ListPop) {
+    EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let xs = [10, 20, 30];
+            let y = xs.pop();
+            return y + 20;
+        }
+    )"), 50);
+}
+
+TEST(Integration, ListPushPopMixed) {
+    EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let xs: list<int> = [];
+            xs.push(5);
+            xs.push(7);
+            let a = xs.pop();
+            xs.push(9);
+            let b = xs.pop();
+            return a * 10 + b;
+        }
+    )"), 79);
+}
+
+TEST(Integration, ListLenAfterPush) {
+    EXPECT_EQ(compile_and_run(R"(
+        fn main()->int { let xs: list<int> = []; xs.push(1); xs.push(2); xs.push(3); return xs.len(); }
+    )"), 3);
 }
 
 TEST(Integration, MultiFunctionNesting) {

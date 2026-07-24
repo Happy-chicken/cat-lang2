@@ -42,6 +42,26 @@ namespace cat::ir {
     }
   }// namespace
 
+  ListType *IrEmitter::lookup_or_create_list_type(llvm::Type *elem_ty) {
+    auto key = list_type_key(elem_ty);
+    auto &e = ctx->list_types[key];
+    if (!e) {
+      e = std::make_unique<ListType>();
+      auto &c = *ctx->llvm_ctx;
+      e->struct_ty = llvm::StructType::create(c, key);
+      e->elem_ty = elem_ty;
+      e->struct_ty->setBody({i64(c), i64(c), ptr_ty(c)});
+    }
+    return e.get();
+  }
+
+  ListType *IrEmitter::lookup_list_type_by_struct(llvm::StructType *st) {
+    for (auto &kv : ctx->list_types)
+      if (kv.second->struct_ty == st)
+        return kv.second.get();
+    return nullptr;
+  }
+
   IrEmitter::IrEmitter(const string &name, error::DiagCtxt &diag, semantics::SemaCtxt &sema_ctx)
       : ctx(std::make_unique<CodeGenCtxt>(name)),
         env(std::make_shared<Env>()), diag(diag), current_function(nullptr),
@@ -66,15 +86,7 @@ namespace cat::ir {
           if constexpr (std::is_same_v<T, ast::Type::List>) {
             if (!v.inner) return ptr_ty(c);
             auto et = llvm_type(*v.inner);
-            auto key = list_type_key(et);
-            auto &e = ctx->list_types[key];
-            if (!e) {
-              e = std::make_unique<ListType>();
-              e->struct_ty = llvm::StructType::create(c, key);
-              e->elem_ty = et;
-              e->struct_ty->setBody({i64(c), i64(c), ptr_ty(c)});
-            }
-            return e->struct_ty;
+            return lookup_or_create_list_type(et)->struct_ty;
           }
           if constexpr (std::is_same_v<T, ast::Type::Class>) {
             return ptr_ty(c);
@@ -945,6 +957,12 @@ namespace cat::ir {
               auto *self = compile_expr(*callee.object);
               if (!self) return nullptr;
 
+              // builtin list methods
+              if (auto *st = llvm::dyn_cast<llvm::StructType>(self->getType()))
+                if (auto *lt = lookup_list_type_by_struct(st))
+                  if (auto desc = sema.get_builtins().lookup("list", callee.field))
+                    return emit_builtin_method(desc->get(), lt, st, *callee.object, call.args, span);
+
               string mangled = callee.field;
               for (auto &kv: ctx->class_registry) {
                 auto it = kv.second->methods.find(callee.field);
@@ -1100,20 +1118,18 @@ namespace cat::ir {
     if (!iv->getType()->isIntegerTy(64))
       iv = ctx->builder->CreateZExt(iv, i64(c));
 
-    for (auto &kv: ctx->list_types) {
-      if (ov->getType() != kv.second->struct_ty) continue;
-      auto *st = kv.second->struct_ty;
-      auto *et = kv.second->elem_ty;
+    auto *st = llvm::dyn_cast<llvm::StructType>(ov->getType());
+    if (!st) return nullptr;
+    auto *lt = lookup_list_type_by_struct(st);
+    if (!lt) return nullptr;
 
-      auto *tmp = ctx->builder->CreateAlloca(st, nullptr, "list.tmp");
-      ctx->builder->CreateStore(ov, tmp);
+    auto *tmp = ctx->builder->CreateAlloca(st, nullptr, "list.tmp");
+    ctx->builder->CreateStore(ov, tmp);
 
-      auto *len = ctx->builder->CreateLoad(i64(c), ctx->builder->CreateStructGEP(st, tmp, 0));
-      emit_bounds_check(iv, len, idx.span);
-      auto *data = ctx->builder->CreateLoad(ptr_ty(c), ctx->builder->CreateStructGEP(st, tmp, 2));
-      return ctx->builder->CreateLoad(et, ctx->builder->CreateGEP(et, data, iv));
-    }
-    return nullptr;
+    auto *len = ctx->builder->CreateLoad(i64(c), ctx->builder->CreateStructGEP(st, tmp, 0));
+    emit_bounds_check(iv, len, idx.span);
+    auto *data = ctx->builder->CreateLoad(ptr_ty(c), ctx->builder->CreateStructGEP(st, tmp, 2));
+    return ctx->builder->CreateLoad(lt->elem_ty, ctx->builder->CreateGEP(lt->elem_ty, data, iv));
   }
 
   llvm::Value *IrEmitter::compile_index_ptr(const ExprNode &e) {
@@ -1127,18 +1143,17 @@ namespace cat::ir {
               if (!iv->getType()->isIntegerTy(64))
                 iv = ctx->builder->CreateZExt(iv, i64(c));
 
-              for (auto &kv: ctx->list_types) {
-                if (ov->getType() != kv.second->struct_ty) continue;
-                auto *st = kv.second->struct_ty;
-                auto *et = kv.second->elem_ty;
-
-                auto *tmp = ctx->builder->CreateAlloca(st, nullptr, "list.tmp");
-                ctx->builder->CreateStore(ov, tmp);
-
-                auto *len = ctx->builder->CreateLoad(i64(c), ctx->builder->CreateStructGEP(st, tmp, 0));
-                emit_bounds_check(iv, len, ie.index->span);
-                auto *data = ctx->builder->CreateLoad(ptr_ty(c), ctx->builder->CreateStructGEP(st, tmp, 2));
-                return ctx->builder->CreateGEP(et, data, iv);
+              auto *st = llvm::dyn_cast<llvm::StructType>(ov->getType());
+              if (st) {
+                auto *lt = lookup_list_type_by_struct(st);
+                if (lt) {
+                  auto *tmp = ctx->builder->CreateAlloca(st, nullptr, "list.tmp");
+                  ctx->builder->CreateStore(ov, tmp);
+                  auto *len = ctx->builder->CreateLoad(i64(c), ctx->builder->CreateStructGEP(st, tmp, 0));
+                  emit_bounds_check(iv, len, ie.index->span);
+                  auto *data = ctx->builder->CreateLoad(ptr_ty(c), ctx->builder->CreateStructGEP(st, tmp, 2));
+                  return ctx->builder->CreateGEP(lt->elem_ty, data, iv);
+                }
               }
               if (ov->getType()->isPointerTy())
                 return ctx->builder->CreateGEP(llvm::IntegerType::getInt8Ty(c), ov, iv);
@@ -1183,20 +1198,14 @@ namespace cat::ir {
       vals.resize(elements.size(), llvm::Constant::getNullValue(et));
     }
 
-    auto key = list_type_key(et);
-    auto &entry = ctx->list_types[key];
-    if (!entry) {
-      entry = std::make_unique<ListType>();
-      entry->struct_ty = llvm::StructType::create(c, key);
-      entry->elem_ty = et;
-      entry->struct_ty->setBody({i64(c), i64(c), ptr_ty(c)});
-    }
+    auto *entry = lookup_or_create_list_type(et);
 
     auto *a = ctx->builder->CreateAlloca(entry->struct_ty, nullptr, "list");
     size_t n = vals.size();
-    auto *nv = llvm::ConstantInt::get(i64(c), n);
-    ctx->builder->CreateStore(nv, ctx->builder->CreateStructGEP(entry->struct_ty, a, 0));
-    ctx->builder->CreateStore(nv, ctx->builder->CreateStructGEP(entry->struct_ty, a, 1));
+    auto *len = llvm::ConstantInt::get(i64(c), n);
+    auto *cap = llvm::ConstantInt::get(i64(c), n == 0 ? 4 : n * 2);
+    ctx->builder->CreateStore(len, ctx->builder->CreateStructGEP(entry->struct_ty, a, 0));
+    ctx->builder->CreateStore(cap, ctx->builder->CreateStructGEP(entry->struct_ty, a, 1));
 
     auto *df = ctx->builder->CreateStructGEP(entry->struct_ty, a, 2);
     if (n == 0) {
@@ -1208,7 +1217,7 @@ namespace cat::ir {
     auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
         llvm::ConstantExpr::getSizeOf(et), i64(c)
     );
-    auto *total = ctx->builder->CreateMul(nv, elem_sz);
+    auto *total = ctx->builder->CreateMul(len, elem_sz);
     auto *data = ctx->builder->CreateCall(malloc_fn, {total}, "listdata");
     ctx->builder->CreateStore(data, df);
 
@@ -1232,18 +1241,14 @@ namespace cat::ir {
 
   void IrEmitter::emit_list_with_init_fields(llvm::Value *a, const vector<uptr<ExprNode>> &elements, llvm::Type *elem_ty, Span) {
     auto &c = *ctx->llvm_ctx;
-    llvm::StructType *st = nullptr;
-    for (auto &kv: ctx->list_types)
-      if (kv.second->elem_ty == elem_ty) {
-        st = kv.second->struct_ty;
-        break;
-      }
-    if (!st) return;
+    auto *entry = lookup_or_create_list_type(elem_ty);
+    auto *st = entry->struct_ty;
 
     size_t n = elements.size();
-    auto *nv = llvm::ConstantInt::get(i64(c), n);
-    ctx->builder->CreateStore(nv, ctx->builder->CreateStructGEP(st, a, 0));
-    ctx->builder->CreateStore(nv, ctx->builder->CreateStructGEP(st, a, 1));
+    auto *len = llvm::ConstantInt::get(i64(c), n);
+    auto *cap = llvm::ConstantInt::get(i64(c), n == 0 ? 4 : n * 2);
+    ctx->builder->CreateStore(len, ctx->builder->CreateStructGEP(st, a, 0));
+    ctx->builder->CreateStore(cap, ctx->builder->CreateStructGEP(st, a, 1));
 
     auto *df = ctx->builder->CreateStructGEP(st, a, 2);
     if (n == 0) {
@@ -1255,7 +1260,7 @@ namespace cat::ir {
     auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
         llvm::ConstantExpr::getSizeOf(elem_ty), i64(c)
     );
-    auto *total = ctx->builder->CreateMul(nv, elem_sz);
+    auto *total = ctx->builder->CreateMul(len, elem_sz);
     auto *buf = ctx->builder->CreateCall(malloc_fn, {total}, "listdata");
     ctx->builder->CreateStore(buf, df);
 
@@ -1264,6 +1269,43 @@ namespace cat::ir {
           compile_expr(*elements[i]),
           ctx->builder->CreateGEP(elem_ty, buf, llvm::ConstantInt::get(i64(c), i))
       );
+  }
+
+  llvm::Value *IrEmitter::emit_builtin_method(const runtime::BuiltinMethodDesc &desc,
+                                               ListType *lt, llvm::StructType *st,
+                                               const ExprNode &obj_expr,
+                                               const vector<uptr<ExprNode>> &args,
+                                               Span span) {
+    auto *list_ptr = std::visit(
+        overload{
+            [&](const Variable &var) -> llvm::Value * {
+              auto vi = env->lookup_var(var.name);
+              return vi.ptr;
+            },
+            [](const auto &) -> llvm::Value * { return nullptr; },
+        },
+        obj_expr.expr
+    );
+    if (!list_ptr) {
+      diag.error(span, "Cannot call '" + desc.name + "' on non-variable list expression").emit_to(diag);
+      return nullptr;
+    }
+
+    vector<llvm::Value *> arg_vals;
+    for (auto &a : args) {
+      auto *v = compile_expr(*a);
+      if (!v) return nullptr;
+      arg_vals.push_back(v);
+    }
+
+    runtime::IrGenParams params{
+        *ctx->builder, *ctx->module, *ctx->llvm_ctx,
+        [this](const string &name, llvm::Type *ret, vector<llvm::Type *> param_tys, bool va) {
+          return declare_runtime_func(name, ret, param_tys, va);
+        },
+        diag};
+
+    return desc.ir_generate(params, list_ptr, st, lt->elem_ty, arg_vals, span);
   }
 
   llvm::Value *IrEmitter::emit_string_literal(const string &s) {

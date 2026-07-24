@@ -92,6 +92,12 @@ public:
 
     bool is_callable() const;
 
+    void clear_known_list_len() {
+      if (auto *vd = std::get_if<VariableData>(&kind)) {
+        vd->known_list_len = std::nullopt;
+      }
+    }
+
     const char *kindname() const;
 
     const SymbolKind &get_kind() const noexcept { return kind; }
