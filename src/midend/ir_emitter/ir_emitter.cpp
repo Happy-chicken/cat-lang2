@@ -1069,10 +1069,16 @@ llvm::Value *IrEmitter::compile_call(const CallExpr &call, Span span) {
 
               vector<llvm::Value *> args;
               args.reserve(call.args.size());
-              for (auto &arg : call.args) {
-                auto *arg_val = compile_expr(*arg);
+              for (size_t i = 0; i < call.args.size(); ++i) {
+                auto *arg_val = compile_expr(*call.args[i]);
                 if (!arg_val)
                   return nullptr;
+                auto *param_ty = fn_ty->getParamType(static_cast<unsigned>(i));
+                if (param_ty->isPointerTy() && arg_val &&
+                    !arg_val->getType()->isPointerTy())
+                  if (auto *var = std::get_if<Variable>(&call.args[i]->expr))
+                    if (auto vi = env->lookup_var(var->name); vi.ptr)
+                      arg_val = vi.ptr;
                 args.push_back(arg_val);
               }
               return ctx->builder->CreateCall(fn_ty, fn_ptr, args);
@@ -1087,16 +1093,13 @@ llvm::Value *IrEmitter::compile_call(const CallExpr &call, Span span) {
                   return nullptr;
                 args.push_back(arg_val);
               }
-              runtime::IrGenParams params{*ctx->builder, *ctx->module,
-                                          *ctx->llvm_ctx,
-                                          [this](const string &name,
-                                                 llvm::Type *ret,
-                                                 vector<llvm::Type *> param_tys,
-                                                 bool va) {
-                                            return declare_runtime_func(
-                                                name, ret, param_tys, va);
-                                          },
-                                          diag};
+              runtime::IrGenParams params{
+                  *ctx->builder, *ctx->module, *ctx->llvm_ctx,
+                  [this](const string &name, llvm::Type *ret,
+                         vector<llvm::Type *> param_tys, bool va) {
+                    return declare_runtime_func(name, ret, param_tys, va);
+                  },
+                  diag};
               return desc->get().ir_generate(params, args, span);
             }
 
@@ -1470,6 +1473,8 @@ llvm::Value *IrEmitter::emit_builtin_method(
       std::visit(overload{
                      [&](const Variable &var) -> llvm::Value * {
                        auto vi = env->lookup_var(var.name);
+                       if (vi.is_ref)
+                         return ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
                        return vi.ptr;
                      },
                      [](const auto &) -> llvm::Value * { return nullptr; },
