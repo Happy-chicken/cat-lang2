@@ -97,14 +97,54 @@ void Parser::synchronize() {
     }
     if (check_any({TokenKind::Let, TokenKind::Fn, TokenKind::Class,
                    TokenKind::If, TokenKind::While, TokenKind::Return,
-                   TokenKind::Break, TokenKind::Continue,
+                   TokenKind::Break, TokenKind::Continue, TokenKind::RightBrace,
                    TokenKind::TokenEOF})) {
-      advance(); // 跳过该关键字，视为同步点
       return;
     }
     advance();
   }
 }
+} // namespace cat
+
+namespace cat {
+
+bool Parser::can_start_expr() const {
+  if (!current_token.has_value())
+    return false;
+  switch (current_token->kind) {
+  case TokenKind::IntLiteral:
+  case TokenKind::FloatLiteral:
+  case TokenKind::StringLiteral:
+  case TokenKind::CharLiteral:
+  case TokenKind::True:
+  case TokenKind::False:
+  case TokenKind::Identifier:
+  case TokenKind::Sself:
+  case TokenKind::LeftParen:
+  case TokenKind::LeftBracket:
+  case TokenKind::Bang:
+  case TokenKind::Minus:
+  case TokenKind::BitwiseAnd:
+  case TokenKind::Star:
+  case TokenKind::Fn:
+    return true;
+  default:
+    return false;
+  }
+}
+
+void Parser::warn_missing_semicolon(Span span) {
+  string msg = "missing ';' after ";
+  if (current_token.has_value())
+    msg += "statement (before " +
+           string(tokenkind_to_string(current_token->kind)) + ")";
+  else
+    msg += "statement at end of file";
+  diag_ctxt.error(span, msg)
+      .note("Insert ';' to fix this error.")
+      .emit_to(diag_ctxt);
+}
+
 } // namespace cat
 
 // parsing
@@ -228,7 +268,11 @@ error::ParseResult<StmtNode> Parser::parse_stmt() {
     if (!expr.has_value()) {
       return std::nullopt;
     }
-    consume(TokenKind::Semicolon, "Expected ';' after expression statement.");
+    if (!check(TokenKind::Semicolon)) {
+      warn_missing_semicolon(expr->span);
+    } else {
+      advance();
+    }
     return StmtNode{span, make_expr_stmt(std::move(*expr))};
   }
   }
@@ -368,11 +412,22 @@ error::ParseResult<ExprNode> Parser::parse_assignment() {
     return std::nullopt;
   }
   if (check(TokenKind::Equal)) {
+    auto eq_span = current_span();
     advance();
     auto right = parse_assignment();
     if (!right.has_value()) {
       return std::nullopt;
     }
+
+    if (!std::holds_alternative<Variable>(left->expr) &&
+        !std::holds_alternative<MemberExpr>(left->expr) &&
+        !std::holds_alternative<IndexExpr>(left->expr)) {
+      return err<ExprNode>(
+          eq_span,
+          "Invalid assignment target: the left-hand side of '=' must be a "
+          "variable, field access, or index expression.");
+    }
+
     auto target = std::make_unique<ExprNode>(std::move(*left));
     auto value = std::make_unique<ExprNode>(std::move(*right));
     auto expr = make_assign(std::move(target), std::move(value));
@@ -563,6 +618,19 @@ error::ParseResult<ExprNode> Parser::parse_unary() {
     auto op_span = current_span();
     auto op_kind = current_token->kind;
     advance();
+
+    if ((op_kind == TokenKind::Star || op_kind == TokenKind::BitwiseAnd) &&
+        !can_start_expr()) {
+      string op_name =
+          op_kind == TokenKind::Star ? "'*' (dereference)" : "'&' (address-of)";
+      return err<ExprNode>(
+          op_span, "Expected expression after " + op_name +
+                       " operator, but found " +
+                       (current_token.has_value()
+                            ? string(tokenkind_to_string(current_token->kind))
+                            : "EOF"));
+    }
+
     auto expr = parse_unary();
     if (!expr.has_value()) {
       return std::nullopt;
@@ -622,6 +690,14 @@ error::ParseResult<ExprNode> Parser::parse_postfix() {
     }
     case TokenKind::LeftBracket: {
       advance(); // consume '['
+      if (!can_start_expr()) {
+        return err<ExprNode>(
+            current_span(),
+            "Expected expression inside '[...]', but found " +
+                (current_token.has_value()
+                     ? string(tokenkind_to_string(current_token->kind))
+                     : "EOF"));
+      }
       auto index_expr = parse_expr();
       if (!index_expr.has_value()) {
         return std::nullopt;
@@ -744,13 +820,25 @@ error::ParseResult<ExprNode> Parser::parse_primary() {
 }
 
 error::ParseResult<Block> Parser::parse_block() {
+  auto open_span = current_span();
   consume(TokenKind::LeftBrace, "Expected '{' at the beginning of block.");
   auto stmts = vector<StmtNode>{};
   while (!check(TokenKind::RightBrace) && !is_at_end()) {
     auto stmt = parse_stmt();
     if (stmt.has_value()) {
       stmts.push_back(std::move(*stmt));
+    } else {
+      synchronize();
     }
+  }
+  if (is_at_end()) {
+    diag_ctxt
+        .error(open_span,
+               "Unclosed block: expected '}' to close this block, but reached "
+               "end of file")
+        .note("This '{' was never closed.")
+        .emit_to(diag_ctxt);
+    return std::nullopt;
   }
   consume(TokenKind::RightBrace, "Expected '}' at the end of block.");
   return Block{std::move(stmts)};

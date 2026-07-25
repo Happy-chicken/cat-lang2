@@ -40,6 +40,9 @@ private:
 
   void synchronize();
 
+  bool can_start_expr() const;
+  void warn_missing_semicolon(Span span);
+
   // parsing
   error::ParseResult<ItemNode> parse_item();
   error::ParseResult<StmtNode> parse_stmt();
