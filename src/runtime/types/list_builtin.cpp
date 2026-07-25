@@ -34,6 +34,9 @@ semantics::Type build_func_pop(const semantics::Type &elem_ty) {
 llvm::IntegerType *i64(llvm::LLVMContext &c) {
   return llvm::IntegerType::getInt64Ty(c);
 }
+llvm::IntegerType *i32(llvm::LLVMContext &c) {
+  return llvm::IntegerType::getInt32Ty(c);
+}
 llvm::PointerType *ptr_ty(llvm::LLVMContext &c) {
   return llvm::PointerType::get(c, 0);
 }
@@ -43,8 +46,12 @@ void grow_list(const IrGenParams &p, llvm::Value *list_ptr,
                llvm::StructType *st, llvm::Type *elem_ty) {
   auto *old_cap = p.builder.CreateLoad(
       i64(p.llvm_ctx), p.builder.CreateStructGEP(st, list_ptr, 1));
-  auto *new_cap =
-      p.builder.CreateMul(old_cap, llvm::ConstantInt::get(i64(p.llvm_ctx), 2));
+  // Double capacity, but start with a minimum of 8 for uninitialized lists
+  auto *two = llvm::ConstantInt::get(i64(p.llvm_ctx), 2);
+  auto *min_cap = llvm::ConstantInt::get(i64(p.llvm_ctx), 8);
+  auto *doubled = p.builder.CreateMul(old_cap, two);
+  auto *new_cap = p.builder.CreateSelect(
+      p.builder.CreateICmpUGT(doubled, old_cap), doubled, min_cap);
   p.builder.CreateStore(new_cap, p.builder.CreateStructGEP(st, list_ptr, 1));
 
   auto *old_data = p.builder.CreateLoad(
@@ -82,8 +89,9 @@ void grow_list(const IrGenParams &p, llvm::Value *list_ptr,
 llvm::Value *ir_len(const IrGenParams &p, llvm::Value *list_ptr,
                     llvm::StructType *st, llvm::Type *,
                     const std::vector<llvm::Value *> &, Span) {
-  return p.builder.CreateLoad(i64(p.llvm_ctx),
-                              p.builder.CreateStructGEP(st, list_ptr, 0));
+  auto *len = p.builder.CreateLoad(i64(p.llvm_ctx),
+                                   p.builder.CreateStructGEP(st, list_ptr, 0));
+  return p.builder.CreateTrunc(len, i32(p.llvm_ctx));
 }
 
 llvm::Value *ir_push(const IrGenParams &p, llvm::Value *list_ptr,

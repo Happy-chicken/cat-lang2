@@ -82,7 +82,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/midend/ir_optimizer/passes)
 
 file(GLOB_RECURSE SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/common/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/backend/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/backend/jit.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/types/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/ast/*.cpp"
@@ -113,7 +113,7 @@ set(MLIR_LIBS
     MLIRArithDialect MLIRControlFlowDialect MLIRFuncDialect MLIRMemRefDialect
 )
 
-add_executable(catlang main.cpp)
+add_executable(catlang main.cpp src/backend/aot.cpp)
 if(IS_MACOS)
     target_link_libraries(catlang PRIVATE catlang_lib ${LLVM_LIBS} ${MLIR_LIBS} ncurses)
 elseif(IS_LINUX)

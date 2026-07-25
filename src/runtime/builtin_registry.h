@@ -52,16 +52,35 @@ struct BuiltinMethodDesc {
   IrGenFunc ir_generate;
 };
 
+using StandaloneFuncTypeBuilder = std::function<semantics::Type()>;
+
+using IrGenStandaloneFunc = std::function<llvm::Value *(
+    const IrGenParams &p, const std::vector<llvm::Value *> &args, Span span)>;
+
+struct BuiltinFuncDesc {
+  std::string name;
+  size_t arity;
+  StandaloneFuncTypeBuilder build_func_type;
+  IrGenStandaloneFunc ir_generate;
+};
+
 class BuiltinRegistry {
 public:
   void register_type(const std::string &tag,
                      std::vector<BuiltinMethodDesc> methods);
+
+  void register_func(BuiltinFuncDesc desc);
 
   std::optional<std::reference_wrapper<const BuiltinMethodDesc>>
   lookup(const std::string &tag, const std::string &method) const;
 
   bool is_method_declared(const std::string &tag,
                           const std::string &method) const;
+
+  std::optional<std::reference_wrapper<const BuiltinFuncDesc>>
+  lookup_standalone(const std::string &name) const;
+
+  bool is_standalone_declared(const std::string &name) const;
 
   void init_defaults();
 
@@ -79,6 +98,7 @@ private:
     }
   };
   std::unordered_map<Key, BuiltinMethodDesc, KeyHash> methods_;
+  std::unordered_map<std::string, BuiltinFuncDesc> funcs_;
 };
 
 } // namespace cat::runtime

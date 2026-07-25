@@ -673,6 +673,8 @@ void IrEmitter::compile_stmt(const StmtNode &sn) {
             auto *a = ctx->builder->CreateAlloca(vt, nullptr, s.name);
             if (iv)
               ctx->builder->CreateStore(iv, a);
+            else
+              ctx->builder->CreateStore(llvm::Constant::getNullValue(vt), a);
 
             bool is_ref = s.ty && std::get_if<ast::Type::Ref>(&s.ty->data);
             bool is_own = s.ty && std::get_if<ast::Type::Own>(&s.ty->data);
@@ -1074,6 +1076,28 @@ llvm::Value *IrEmitter::compile_call(const CallExpr &call, Span span) {
                 args.push_back(arg_val);
               }
               return ctx->builder->CreateCall(fn_ty, fn_ptr, args);
+            }
+
+            if (auto desc =
+                    sema.get_builtins().lookup_standalone(callee.name)) {
+              vector<llvm::Value *> args;
+              for (auto &arg : call.args) {
+                auto *arg_val = compile_expr(*arg);
+                if (!arg_val)
+                  return nullptr;
+                args.push_back(arg_val);
+              }
+              runtime::IrGenParams params{*ctx->builder, *ctx->module,
+                                          *ctx->llvm_ctx,
+                                          [this](const string &name,
+                                                 llvm::Type *ret,
+                                                 vector<llvm::Type *> param_tys,
+                                                 bool va) {
+                                            return declare_runtime_func(
+                                                name, ret, param_tys, va);
+                                          },
+                                          diag};
+              return desc->get().ir_generate(params, args, span);
             }
 
             diag.error(span, "Undefined function: " + callee.name)

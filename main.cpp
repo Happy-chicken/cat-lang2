@@ -1,8 +1,7 @@
 #include "./src/frontend/sema_checker/pass_manager.h"
 #include "./src/midend/ast_optimizer/pass_manager.h"
 #include "algebraic_simplifier.h"
-#include "analysis_ctx.h"
-#include "andersen_solver.h"
+#include "aot.h"
 #include "block_simplifier.h"
 #include "boolean_simplifier.h"
 #include "canonicalization.h"
@@ -14,39 +13,74 @@
 #include "ir_emitter.h"
 #include "jit.h"
 #include "lexer.h"
-#include "live_variable.h"
 #include "llvm_optimizer.h"
-#include "mlir_emitter.h"
 #include "parser.h"
-#include "printer.h"
-#include "reaching_definition.h"
 #include "resolver.h"
 #include "sema_checker.h"
 #include "type_checker.h"
-#include "very_busy_expression.h"
+#include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <llvm/Support/CommandLine.h>
 
-static void run() {
-  std::string source = R"(
-    fn add(a: int, b: int) -> int { return a + b; }
-        fn apply(op: (int, int) -> int, x: int, y: int) -> int { return op(x, y); }
-        fn main()->int {
-          let l:list<int>;
-          l = [1,3,4,5,6,6,6];
-          return apply(add, 10, 20);
-        }
-  )";
+namespace cl = llvm::cl;
 
-  cat::File file("foo.cat", source);
-  cat::error::DiagCtxt diag_ctxt;
+static cl::OptionCategory CatLangOpts("catlang");
+
+static cl::SubCommand RunCmd("run", "JIT compile and execute a .cat file");
+static cl::SubCommand BuildCmd("build",
+                               "AOT compile a .cat file to native executable");
+
+static cl::opt<std::string> RunInput(cl::Positional, cl::Required,
+                                     cl::desc("<input.cat>"),
+                                     cl::cat(CatLangOpts), cl::sub(RunCmd));
+
+static cl::opt<std::string> BuildInput(cl::Positional, cl::Required,
+                                       cl::desc("<input.cat>"),
+                                       cl::cat(CatLangOpts), cl::sub(BuildCmd));
+
+static cl::opt<std::string>
+    BuildOutput("o", cl::desc("Output executable path (default: ./a.out)"),
+                cl::init("./a.out"), cl::cat(CatLangOpts), cl::sub(BuildCmd));
+
+static cl::opt<bool> DumpIR("ir", cl::desc("Dump LLVM IR to out/ir.ll"),
+                            cl::init(false), cl::cat(CatLangOpts),
+                            cl::sub(RunCmd), cl::sub(BuildCmd));
+
+static std::string read_file(const std::string &path) {
+  std::ifstream ifs(path);
+  if (!ifs)
+    return {};
+  std::ostringstream oss;
+  oss << ifs.rdbuf();
+  return oss.str();
+}
+
+static void dump_module_to_file(cat::ir::IrEmitter &emitter) {
+  std::filesystem::create_directories("out");
+  std::ofstream ofs("out/ir.ll");
+  if (ofs)
+    emitter.dump_module(ofs);
+  else
+    std::cerr << "Failed to write out/ir.ll" << std::endl;
+}
+
+// Run lex→parse→sema→optimize→IR emit on source.
+// Returns true on success.  After this call `emitter` is ready.
+static bool compile_pipeline(const std::string &source,
+                             const std::string &filename,
+                             cat::ir::IrEmitter &emitter,
+                             cat::semantics::PassManager &sema_pm,
+                             cat::error::DiagCtxt &diag_ctxt) {
+  cat::File file(filename, source);
   diag_ctxt.add_file(std::move(file));
 
   cat::Lexer lexer(source);
   cat::Parser parser(lexer, diag_ctxt);
   auto program = parser.parse_program();
 
-  cat::semantics::PassManager sema_pm;
   sema_pm.add_pass(std::make_unique<cat::Resolver>());
   sema_pm.add_pass(std::make_unique<cat::SemaChecker>());
   sema_pm.add_pass(std::make_unique<cat::FlowChecker>());
@@ -55,7 +89,7 @@ static void run() {
 
   if (diag_ctxt.has_errors()) {
     diag_ctxt.print_all(std::cerr);
-    return;
+    return false;
   }
 
   cat::opt::ast::PassManager ast_opt_pm;
@@ -67,102 +101,80 @@ static void run() {
   ast_opt_pm.add_pass<cat::opt::ast::BlockSimplifier>();
   ast_opt_pm.run(program);
 
-  cat::ir::IrEmitter emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
   emitter.compile(program);
-  emitter.dump_module(std::cout);
-
 
   cat::opt::LLVMOptimizer llvm_opt;
   llvm_opt.optimize(const_cast<llvm::Module &>(emitter.get_module()));
-  emitter.dump_module(std::cout);
 
-  // cat::mmlir::MlirEmitter mlir_emitter(file.name(), diag_ctxt, sema_pm.get_sema_ctxt());
-  // mlir_emitter.compile(program);
-  // mlir_emitter.dump_module(std::cout);
+  if (DumpIR)
+    dump_module_to_file(emitter);
 
-  cat::opt::ana::AnalysisCtxt analysis_ctx(emitter.get_module());
-  const auto &cfgs = analysis_ctx.get_cfgs();
+  return true;
+}
 
-  std::cout << "\n--- Live variables ---\n";
-  for (const auto &[fn_name, cfg]: cfgs) {
-    if (cfg.blocks.empty()) continue;
-    auto live_in = cat::opt::ana::compute_live_variables(cfg);
-    for (auto &b: cfg.blocks) {
-      for (auto *v: b.def) {
-        bool ever_live = false;
-        for (auto &li: live_in)
-          if (li.count(v)) {
-            ever_live = true;
-            break;
-          }
-        if (!ever_live && v->hasName())
-          std::cout << "  unused `" << v->getName().str() << "` in " << fn_name << "\n";
-      }
-    }
+static int run(const std::string &input) {
+  std::string source = read_file(input);
+  if (source.empty()) {
+    std::cerr << "Error: cannot read " << input << std::endl;
+    return 1;
   }
 
-  std::cout << "\n--- Very busy expressions ---\n";
-  for (const auto &[fn_name, cfg]: cfgs) {
-    if (cfg.blocks.empty()) continue;
-    auto very_busy = cat::opt::ana::compute_very_busy_expressions(cfg, *analysis_ctx.get_func_data().at(fn_name));
-    std::cout << fn_name << ":\n";
-    for (auto &b: cfg.blocks) {
-      if (b.id == cfg.exit) continue;
-      const auto &vbe = very_busy[b.id];
-      bool first = true;
-      std::string str;
-      for (auto *e: vbe) {
-        if (!e->hasName()) continue;
-        if (!first) str += ", ";
-        str += e->getName().str();
-        first = false;
-      }
-      if (!str.empty())
-        std::cout << "  block[" << b.id << "] very busy: {" << str << "}\n";
-    }
-  }
+  cat::error::DiagCtxt diag_ctxt;
+  cat::semantics::PassManager sema_pm;
+  cat::ir::IrEmitter emitter(input, diag_ctxt, sema_pm.get_sema_ctxt());
 
-  std::cout << "\n--- Reaching definitions ---\n";
-  for (const auto &[fn_name, cfg]: cfgs) {
-    if (cfg.blocks.empty()) continue;
-    auto reaching_defs = cat::opt::ana::compute_reaching_definitions(cfg, *analysis_ctx.get_func_data().at(fn_name));
-    std::cout << fn_name << ":\n";
-    for (auto &b: cfg.blocks) {
-      if (b.id == cfg.exit) continue;
-      const auto &rd = reaching_defs[b.id];
-      bool first = true;
-      std::string str;
-      for (auto *d: rd) {
-        if (!d->hasName()) continue;
-        if (!first) str += ", ";
-        str += d->getName().str();
-        first = false;
-      }
-      if (!str.empty())
-        std::cout << "  block[" << b.id << "] reaching defs: {" << str << "}\n";
-    }
-  }
-
-  std::cout << "\n--- Andersen points-to ---\n";
-  for (const auto &func: emitter.get_module()) {
-    if (func.getName().starts_with("llvm.")) continue;
-    auto andersen = cat::opt::ana::compute_andersen(func);
-    std::cout << func.getName().str() << ":\n";
-    std::string s;
-    llvm::raw_string_ostream os(s);
-    andersen->dump(os);
-    std::cout << s;
-  }
+  if (!compile_pipeline(source, input, emitter, sema_pm, diag_ctxt))
+    return 1;
 
   cat::jit::JIT jit(diag_ctxt);
-  jit.add_symbol("malloc", reinterpret_cast<void *>(&malloc));
   jit.add_module(emitter);
+  if (diag_ctxt.has_errors()) {
+    diag_ctxt.print_all(std::cerr);
+    return 1;
+  }
+  int rc = jit.run();
+  fflush(stdout);
+  return rc;
+}
 
-  int result = jit.run();
-  std::cout << "result -> " << result << std::endl;
+static int build(const std::string &input, const std::string &output) {
+  std::string source = read_file(input);
+  if (source.empty()) {
+    std::cerr << "Error: cannot read " << input << std::endl;
+    return 1;
+  }
+
+  cat::error::DiagCtxt diag_ctxt;
+  cat::semantics::PassManager sema_pm;
+  cat::ir::IrEmitter emitter(input, diag_ctxt, sema_pm.get_sema_ctxt());
+
+  if (!compile_pipeline(source, input, emitter, sema_pm, diag_ctxt))
+    return 1;
+
+  std::string obj = output + ".o";
+  if (!cat::aot::AOTCompiler::compile(
+          const_cast<llvm::Module &>(emitter.get_module()), obj, output))
+    return 1;
+
+  std::cout << "Built: " << output << std::endl;
+  return 0;
 }
 
 int main(int argc, char **argv) {
-  run();
-  return EXIT_SUCCESS;
+  cl::HideUnrelatedOptions(CatLangOpts);
+  cl::ParseCommandLineOptions(argc, argv, "cat-lang compiler\n");
+
+  if (RunCmd) {
+    int rc = run(RunInput);
+    fflush(stdout);
+    _Exit(rc >= 0 ? rc : EXIT_FAILURE);
+  }
+
+  if (BuildCmd) {
+    int rc = build(BuildInput, BuildOutput);
+    _Exit(rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+  }
+
+  cl::PrintHelpMessage();
+  _Exit(EXIT_SUCCESS);
 }

@@ -172,8 +172,10 @@ namespace cat::semantics {
   Type Inferer::infer_identifier(const Variable &var, Span span, SemaCtxt &ctxt, error::DiagCtxt &diag) {
     auto sym = ctxt.get_symbol_table().resolve(var.name);
     if (!sym) {
-      diag.error(span, "Variable '" + var.name + "' is not declared")
-          .emit_to(diag);
+      if (!ctxt.get_builtins().is_standalone_declared(var.name)) {
+        diag.error(span, "Variable '" + var.name + "' is not declared")
+            .emit_to(diag);
+      }
       return Type::error();
     }
     return std::visit(
@@ -448,6 +450,12 @@ namespace cat::semantics {
       diag.error(span, "Class '" + cls->name + "' not found")
           .emit_to(diag);
       return Type::error();
+    }
+
+    if (auto *var = std::get_if<Variable>(&call.callee->expr)) {
+      if (auto desc = ctxt.get_builtins().lookup_standalone(var->name)) {
+        return desc->get().build_func_type();
+      }
     }
 
     diag.error(span, "Called object is not a function or class")

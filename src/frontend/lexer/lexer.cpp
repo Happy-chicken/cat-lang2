@@ -175,16 +175,25 @@ namespace cat {
   Token Lexer::string() {
     advance();
 
-    auto content_start = it;
+    std::string content;
 
     while (!is_eof() && *it != '"') {
       if (*it == '\\' && peek_next().has_value()) {
         advance();
+        switch (*it) {
+        case 'n':  content += '\n'; break;
+        case 't':  content += '\t'; break;
+        case 'r':  content += '\r'; break;
+        case '\\': content += '\\'; break;
+        case '"':  content += '"';  break;
+        case '0':  content += '\0'; break;
+        default:   content += *it;  break;
+        }
+      } else {
+        content += *it;
       }
       advance();
     }
-
-    auto content = std::string(content_start, it);
 
     if (!is_eof())
       advance();
@@ -195,21 +204,30 @@ namespace cat {
   Token Lexer::character() {
     advance();
 
-    auto content_start = it;
-
+    char ch = '\0';
     if (!is_eof() && *it == '\\') {
       advance();
+      if (!is_eof()) {
+        switch (*it) {
+        case 'n':  ch = '\n'; break;
+        case 't':  ch = '\t'; break;
+        case 'r':  ch = '\r'; break;
+        case '\\': ch = '\\'; break;
+        case '\'': ch = '\''; break;
+        case '0':  ch = '\0'; break;
+        default:   ch = *it;  break;
+        }
+        advance();
+      }
+    } else if (!is_eof()) {
+      ch = *it;
+      advance();
     }
-    if (!is_eof())
+
+    if (!is_eof() && *it == '\'')
       advance();
 
-    auto content = std::string(content_start, it);
-
-    if (!is_eof() && *it == '\'') {
-      advance();
-    }
-
-    return make_token(TokenKind::CharLiteral, std::move(content));
+    return make_token(TokenKind::CharLiteral, std::string(1, ch));
   }
 
   Token Lexer::comment() {

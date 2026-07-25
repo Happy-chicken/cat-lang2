@@ -451,6 +451,18 @@ static void check_call_expr(const CallExpr &call, Span span,
   // (7) user-defined path — resolve the symbol
   auto sym = ctx.get_symbol_table().resolve(target->resolved_name);
   if (!sym) {
+    if (ctx.get_builtins().is_standalone_declared(func_name)) {
+      auto desc = ctx.get_builtins().lookup_standalone(func_name);
+      if (desc && desc->get().arity != 0 &&
+          call.args.size() != desc->get().arity) {
+        diag.error(span, "'" + func_name + "' expects " +
+                             std::to_string(desc->get().arity) +
+                             " arguments, got " +
+                             std::to_string(call.args.size()))
+            .emit_to(diag);
+      }
+      return;
+    }
     diag.error(span, "Function '" + func_name + "' is not declared")
         .emit_to(diag);
     return;
@@ -526,8 +538,11 @@ void SemaChecker::check_expr(const ExprNode &expr, Span span,
           [&](const Variable &var) {
             auto sym = ctx.get_symbol_table().resolve(var.name);
             if (!sym) {
-              diag.error(span, "Variable '" + var.name + "' is not declared")
-                  .emit_to(diag);
+              if (!ctx.get_builtins().is_standalone_declared(var.name)) {
+                diag.error(span, "Variable '" + var.name +
+                                     "' is not declared")
+                    .emit_to(diag);
+              }
             }
           },
           [&](const AssignExpr &assign) {

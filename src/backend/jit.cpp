@@ -38,11 +38,11 @@ void JIT::add_symbol(const string &name, void *fn_ptr) {
     return;
   auto &jd = engine->getMainJITDylib();
   llvm::orc::MangleAndInterner mangle(jd.getExecutionSession(),
-                                      engine->getDataLayout());
+                                       engine->getDataLayout());
   llvm::orc::SymbolMap syms;
   syms[mangle(name)] = {llvm::orc::ExecutorAddr::fromPtr(fn_ptr),
-                        llvm::JITSymbolFlags::Callable |
-                            llvm::JITSymbolFlags::Exported};
+                         llvm::JITSymbolFlags::Callable |
+                             llvm::JITSymbolFlags::Exported};
   llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(std::move(syms))));
 }
 
