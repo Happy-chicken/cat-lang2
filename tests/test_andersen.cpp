@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "andersen_solver.h"
+#include "alias.h"
 #include "diag.h"
 #include "file.h"
 #include "flow_checker.h"

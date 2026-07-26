@@ -13,8 +13,7 @@
 
 namespace cat::opt {
 
-PromoteMem2Reg::PromoteMem2Reg(llvm::Function &F, llvm::DominatorTree &DT,
-                               llvm::DominanceFrontier &DF)
+PromoteMem2Reg::PromoteMem2Reg(llvm::Function &F, ana::DomTree &DT, ana::DomFrontier &DF)
     : F(F), DT(DT), DF(DF) {}
 
 // ---------------------------------------------------------------------------
@@ -23,7 +22,6 @@ PromoteMem2Reg::PromoteMem2Reg(llvm::Function &F, llvm::DominatorTree &DT,
 
 bool PromoteMem2Reg::is_promotable(llvm::AllocaInst *AI) {
   llvm::Type *alloc_ty = AI->getAllocatedType();
-  // Only scalar types are promotable; arrays/structs require SROA first.
   if (!alloc_ty->isSingleValueType())
     return false;
 
@@ -36,15 +34,12 @@ bool PromoteMem2Reg::is_promotable(llvm::AllocaInst *AI) {
     if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(U)) {
       if (SI->isVolatile())
         return false;
-      // The alloca must be the store target, not the stored value.
       if (SI->getPointerOperand() != AI)
         return false;
-      // The alloca address itself must not be stored elsewhere (address escape).
       if (SI->getValueOperand() == AI)
         return false;
       continue;
     }
-    // Any other user (GEP, bitcast, call arg, etc.) means address escape.
     return false;
   }
   return true;
@@ -58,30 +53,29 @@ void PromoteMem2Reg::compute_alloca_info(llvm::AllocaInst *AI,
                                          AllocaInfo &Info) {
   Info.Alloca = AI;
   Info.only_used_in_one_block = true;
-  Info.only_block = nullptr;
+  Info.only_block = UINT32_MAX;
   Info.only_store = nullptr;
 
   unsigned store_count = 0;
   for (auto *U : AI->users()) {
     if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(U)) {
-      auto *BB = LI->getParent();
-      Info.using_blocks.push_back(BB);
-      if (Info.only_block == nullptr)
-        Info.only_block = BB;
-      else if (Info.only_block != BB)
+      uint32_t bid = DT.id(LI->getParent());
+      Info.using_blocks.push_back(bid);
+      if (Info.only_block == UINT32_MAX)
+        Info.only_block = bid;
+      else if (Info.only_block != bid)
         Info.only_used_in_one_block = false;
     } else if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(U)) {
-      auto *BB = SI->getParent();
-      Info.defining_blocks.push_back(BB);
-      if (Info.only_block == nullptr)
-        Info.only_block = BB;
-      else if (Info.only_block != BB)
+      uint32_t bid = DT.id(SI->getParent());
+      Info.defining_blocks.push_back(bid);
+      if (Info.only_block == UINT32_MAX)
+        Info.only_block = bid;
+      else if (Info.only_block != bid)
         Info.only_used_in_one_block = false;
       ++store_count;
       Info.only_store = SI;
     }
   }
-  // only_store is meaningful only when there is exactly one store.
   if (store_count != 1)
     Info.only_store = nullptr;
 }
@@ -97,8 +91,6 @@ bool PromoteMem2Reg::try_promote_single_store(AllocaInfo &Info) {
   llvm::Value *stored_val = Info.only_store->getValueOperand();
   for (auto *U : Info.Alloca->users()) {
     if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(U)) {
-      // If the store dominates the load, the loaded value is known.
-      // Otherwise (e.g. loop back-edge before first iteration), use undef.
       if (DT.dominates(Info.only_store, LI))
         LI->replaceAllUsesWith(stored_val);
       else
@@ -113,14 +105,14 @@ bool PromoteMem2Reg::try_promote_single_store(AllocaInfo &Info) {
 }
 
 bool PromoteMem2Reg::try_promote_single_block(AllocaInfo &Info) {
-  if (!Info.only_used_in_one_block || !Info.only_block)
+  if (!Info.only_used_in_one_block || Info.only_block == UINT32_MAX)
     return false;
 
+  auto *BB = DT.block(Info.only_block);
   llvm::Type *alloc_ty = Info.Alloca->getAllocatedType();
-  // Walk instructions in order, tracking the last stored value.
   llvm::Value *cur_val = llvm::UndefValue::get(alloc_ty);
 
-  for (auto &Inst : *Info.only_block) {
+  for (auto &Inst : *BB) {
     if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
       if (SI->getPointerOperand() == Info.Alloca) {
         cur_val = SI->getValueOperand();
@@ -150,43 +142,36 @@ void PromoteMem2Reg::insert_phi_nodes() {
     llvm::Type *alloc_ty = AI->getAllocatedType();
 
     // Collect blocks that contain a store to this alloca.
-    std::set<llvm::BasicBlock *> defining_block_set;
+    std::set<uint32_t> defining_block_set;
     for (auto *U : AI->users()) {
       if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(U))
-        defining_block_set.insert(SI->getParent());
+        defining_block_set.insert(DT.id(SI->getParent()));
     }
 
-    std::set<llvm::BasicBlock *> visited_frontier;
-    std::deque<llvm::BasicBlock *> worklist;
-    for (auto *BB : defining_block_set)
-      worklist.push_back(BB);
+    std::set<uint32_t> visited_frontier;
+    std::deque<uint32_t> worklist;
+    for (uint32_t bid : defining_block_set)
+      worklist.push_back(bid);
 
-    // Iteratively walk dominance frontiers from each defining block.
     while (!worklist.empty()) {
-      auto *B = worklist.front();
+      uint32_t b = worklist.front();
       worklist.pop_front();
 
-      auto it = DF.find(B);
-      if (it == DF.end())
-        continue;
-
-      for (auto *df_block : it->second) {
-        if (!visited_frontier.insert(df_block).second)
+      const auto &fronts = DF.frontier(b);
+      for (uint32_t df_id : fronts) {
+        if (!visited_frontier.insert(df_id).second)
           continue;
 
-        // Create phi with undef placeholders for each predecessor.
-        // Actual values are filled in during rename_block (Stage 5).
+        auto *DFBlock = DT.block(df_id);
         auto *Phi = llvm::PHINode::Create(alloc_ty, 0, "",
-                                          df_block->getFirstInsertionPt());
-        for (auto *Pred : llvm::predecessors(df_block))
+                                          DFBlock->getFirstInsertionPt());
+        for (auto *Pred : llvm::predecessors(DFBlock))
           Phi->addIncoming(llvm::UndefValue::get(alloc_ty), Pred);
 
-        new_phi_nodes[{df_block, alloca_idx}] = Phi;
+        new_phi_nodes[{df_id, alloca_idx}] = Phi;
 
-        // If this frontier block is not itself a defining block,
-        // continue propagating through its dominance frontiers.
-        if (defining_block_set.find(df_block) == defining_block_set.end())
-          worklist.push_back(df_block);
+        if (defining_block_set.find(df_id) == defining_block_set.end())
+          worklist.push_back(df_id);
       }
     }
   }
@@ -202,26 +187,16 @@ static void clear_stack(std::vector<llvm::Value *> &Stack,
 // ---------------------------------------------------------------------------
 // Stage 5: Dominator-tree DFS renaming (core SSA construction)
 // ---------------------------------------------------------------------------
-//
-// Traverses the dominator tree in preorder. For each basic block:
-//   1. Push phis in this block onto their respective value stacks.
-//   2. Replace loads with stack top; push stored values onto stacks.
-//   3. Fill incoming values of phis in successor blocks (CFG children).
-//   4. Recurse into dominator-tree children.
-//   5. Pop all values pushed in this block so sibling subtrees see
-//      the correct stack state.
-//
-// push/pop must be strictly symmetric per block scope.  Each call to
-// rename_block tracks its own pushes in a local vector; this avoids
-// leaking state between sibling subtrees.
 
-void PromoteMem2Reg::rename_block(llvm::BasicBlock *BB) {
+void PromoteMem2Reg::rename_block(uint32_t block_id) {
   std::vector<std::pair<llvm::AllocaInst *, unsigned>> push_count_tracker;
+
+  auto *BB = DT.block(block_id);
 
   // Push phis present at the start of this block onto their stacks.
   for (unsigned alloca_idx = 0; alloca_idx < allocas.size(); ++alloca_idx) {
     auto *AI = allocas[alloca_idx];
-    auto it = new_phi_nodes.find({BB, alloca_idx});
+    auto it = new_phi_nodes.find({block_id, alloca_idx});
     if (it != new_phi_nodes.end()) {
       value_stacks[AI].push_back(it->second);
       push_count_tracker.emplace_back(AI, 1u);
@@ -251,7 +226,6 @@ void PromoteMem2Reg::rename_block(llvm::BasicBlock *BB) {
           if (!Stack.empty()) {
             LI->replaceAllUsesWith(Stack.back());
           } else {
-            // No definition reaches this load — replace with undef.
             LI->replaceAllUsesWith(
                 llvm::UndefValue::get(AI->getAllocatedType()));
           }
@@ -284,8 +258,9 @@ void PromoteMem2Reg::rename_block(llvm::BasicBlock *BB) {
 
   // Fill incoming values of phis in CFG successor blocks.
   for (auto *Succ : llvm::successors(BB)) {
+    uint32_t succ_id = DT.id(Succ);
     for (unsigned alloca_idx = 0; alloca_idx < allocas.size(); ++alloca_idx) {
-      auto it = new_phi_nodes.find({Succ, alloca_idx});
+      auto it = new_phi_nodes.find({succ_id, alloca_idx});
       if (it == new_phi_nodes.end())
         continue;
 
@@ -293,17 +268,16 @@ void PromoteMem2Reg::rename_block(llvm::BasicBlock *BB) {
       auto *AI = allocas[alloca_idx];
       auto &Stack = value_stacks[AI];
 
-      llvm::Value *incoming = Stack.empty()
-                                  ? llvm::UndefValue::get(AI->getAllocatedType())
-                                  : Stack.back();
-
+      llvm::Value *incoming =
+          Stack.empty() ? llvm::UndefValue::get(AI->getAllocatedType())
+                        : Stack.back();
       Phi->setIncomingValueForBlock(BB, incoming);
     }
   }
 
   // Recurse into dominator-tree children.
-  for (auto *child_node : *DT.getNode(BB))
-    rename_block(child_node->getBlock());
+  for (uint32_t child_id : DT.children(block_id))
+    rename_block(child_id);
 
   // Pop all values pushed in this block scope.
   for (auto &entry : push_count_tracker)
@@ -316,8 +290,6 @@ void PromoteMem2Reg::rename_block(llvm::BasicBlock *BB) {
 // ---------------------------------------------------------------------------
 
 void PromoteMem2Reg::cleanup_dead_phis() {
-  // Iterate to a fixed point because simplifying one phi may
-  // make another phi dead or trivially constant.
   bool changed = true;
   while (changed) {
     changed = false;
@@ -328,14 +300,11 @@ void PromoteMem2Reg::cleanup_dead_phis() {
       if (!Phi)
         continue;
 
-      // Remove phi with no users.
       if (Phi->use_empty()) {
         phi_to_erase.push_back(Phi);
         continue;
       }
 
-      // If all non-self incoming values are identical, replace phi with
-      // that common value (trivial phi).
       llvm::Value *common = nullptr;
       bool all_same = true;
       for (unsigned i = 0; i < Phi->getNumIncomingValues(); ++i) {
@@ -398,7 +367,6 @@ void PromoteMem2Reg::run() {
     remaining_allocas.push_back(AI);
   }
 
-  // Erase instructions from fast-path promotion before proceeding.
   for (auto *Inst : to_erase)
     Inst->eraseFromParent();
   to_erase.clear();
@@ -415,15 +383,14 @@ void PromoteMem2Reg::run() {
 
   insert_phi_nodes();
 
-  rename_block(&F.getEntryBlock());
+  rename_block(DT.entry_id());
 
   cleanup_dead_phis();
 
-  // Erase the original alloca instructions and all replaced loads/stores.
   for (auto *AI : allocas)
     AI->eraseFromParent();
   for (auto *Inst : to_erase)
     Inst->eraseFromParent();
 }
 
-}  // namespace cat::opt
+} // namespace cat::opt

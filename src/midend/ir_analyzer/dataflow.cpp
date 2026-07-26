@@ -1,19 +1,14 @@
-#include "analysis_ctx.h"
+#include "dataflow.h"
 #include <llvm-20/llvm/IR/CFG.h>
+#include <llvm-20/llvm/IR/Function.h>
 #include <llvm-20/llvm/IR/InstrTypes.h>
 #include <llvm-20/llvm/IR/Instructions.h>
 
 namespace cat::opt::ana {
 
-AnalysisCtxt::AnalysisCtxt(const llvm::Module &module) {
-  for (const auto &func : module) {
-    auto name = func.getName().str();
-    if (name.starts_with("llvm."))
-      continue;
-    auto fdata = std::make_unique<FunctionAnalysisData>();
-    cfgs[name] = build_cfg(func, *fdata);
-    func_data[name] = std::move(fdata);
-  }
+AnalysisCtxt::AnalysisCtxt(const llvm::Function &func) {
+  build_cfg(func, *func_data);
+  cfg.compute_predecessors();
 }
 
 static bool is_valid_var(const llvm::Value *v) {
@@ -61,8 +56,6 @@ static bool is_valid_expr(const llvm::Instruction &inst) {
 
 CFG AnalysisCtxt::build_cfg(const llvm::Function &func,
                             FunctionAnalysisData &fdata) {
-  CFG cfg;
-
   for (const auto &bb : func) {
     BlockInfo bi;
     bi.id = static_cast<uint32_t>(cfg.blocks.size());

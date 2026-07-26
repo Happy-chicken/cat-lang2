@@ -2,10 +2,8 @@
 
 #include <gtest/gtest.h>
 
-#include <llvm/Analysis/DominanceFrontier.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
-#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Instructions.h>
@@ -38,9 +36,8 @@ protected:
   }
 
   void runMem2Reg(llvm::Function &F) {
-    llvm::DominatorTree DT(F);
-    llvm::DominanceFrontier DF;
-    DF.analyze(DT);
+    opt::ana::DomTree DT(F);
+    opt::ana::DomFrontier DF(DT);
     opt::PromoteMem2Reg pass(F, DT, DF);
     pass.run();
   }
