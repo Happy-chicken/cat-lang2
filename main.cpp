@@ -5,6 +5,7 @@
 #include "block_simplifier.h"
 #include "boolean_simplifier.h"
 #include "canonicalization.h"
+#include "cat_coptimizer.h"
 #include "constant_folder.h"
 #include "dead_brach.h"
 #include "diag.h"
@@ -23,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <llvm-20/llvm/IR/Module.h>
 #include <llvm/Support/CommandLine.h>
 
 namespace cl = llvm::cl;
@@ -81,6 +83,11 @@ static bool compile_pipeline(const std::string &source,
   cat::Parser parser(lexer, diag_ctxt);
   auto program = parser.parse_program();
 
+  if (diag_ctxt.has_errors()) {
+    diag_ctxt.print_all(std::cerr);
+    return false;
+  }
+
   sema_pm.add_pass(std::make_unique<cat::Resolver>());
   sema_pm.add_pass(std::make_unique<cat::SemaChecker>());
   sema_pm.add_pass(std::make_unique<cat::FlowChecker>());
@@ -103,8 +110,10 @@ static bool compile_pipeline(const std::string &source,
 
   emitter.compile(program);
 
-  cat::opt::LLVMOptimizer llvm_opt;
-  llvm_opt.optimize(const_cast<llvm::Module &>(emitter.get_module()));
+  // cat::opt::LLVMOptimizer llvm_opt;
+  // llvm_opt.optimize(const_cast<llvm::Module &>(emitter.get_module()));
+  cat::opt::CatOptimizer cat_opt;
+  cat_opt.optimize(const_cast<llvm::Module &>(emitter.get_module()));
 
   if (DumpIR)
     dump_module_to_file(emitter);

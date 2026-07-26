@@ -34,7 +34,7 @@ let a:int = 1;
 let a:double = 1.1;
 let:str = "hello, catlang!"
 let p:ptr<int> = &a;
-// local letiable
+// local variable
 {
     let a:int=2;
     ...
@@ -79,9 +79,14 @@ while(cond){
 closure? overload?
 
 ```python
-def add(x:int, y:int)->int
+fn add(x:int, y:int)->int
 {
     return x+y;
+}
+fn apply(op: (int) -> int, x: int) -> int { return op(x); }
+fn main()->int {
+  let double = fn(x: int) -> int { return x * 2; };
+    return apply(double, 10);
 }
 ```
 
@@ -108,19 +113,19 @@ class Point {
 }
 
 impl Point {
-    def get_x(self:Point)->int {
+    fn get_x(self:Point)->int {
         return self.x;
     }
-    def get_y(self:Point)->int {
+    fn get_y(self:Point)->int {
         return self.y;
     }
-    def add(self:Point, other:Point)->Point {
+    fn add(self:Point, other:Point)->Point {
         return Point(self.x + other.x, self.y + other.y);
     }
-    def scale(self:Point, factor:int)->Point {
+    fn scale(self:Point, factor:int)->Point {
         return Point(self.x * factor, self.y * factor);
     }
-    def distance_sq(self:Point, other:Point)->int {
+    fn distance_sq(self:Point, other:Point)->int {
         let dx:int = self.x - other.x;
         let dy:int = self.y - other.y;
         return dx * dx + dy * dy;
@@ -133,10 +138,10 @@ class Circle {
 }
 
 impl Circle {
-    def area(self:Circle)->int {
+    fn area(self:Circle)->int {
         return self.radius * self.radius * 3;
     }
-    def contains(self:Circle, p:Point)->int {
+    fn contains(self:Circle, p:Point)->int {
         let dist_sq:int = self.center.distance_sq(p);
         let r_sq:int = self.radius * self.radius;
         if dist_sq < r_sq {
@@ -147,7 +152,7 @@ impl Circle {
     }
 }
 
-def main()->int {
+fn main()->int {
     let p1: Point = Point(1, 2);
     let p2: Point = Point(4, 6);
 

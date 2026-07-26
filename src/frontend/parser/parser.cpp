@@ -99,6 +99,9 @@ void Parser::synchronize() {
                    TokenKind::If, TokenKind::While, TokenKind::Return,
                    TokenKind::Break, TokenKind::Continue, TokenKind::RightBrace,
                    TokenKind::TokenEOF})) {
+      // Skip this token to avoid infinite loops: if the caller fails again
+      // on this keyword, we must make progress past it.
+      advance();
       return;
     }
     advance();
