@@ -34,8 +34,6 @@ static std::vector<DeallocSpec> default_dealloc_specs() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-static bool is_pointer_type(llvm::Type *Ty) { return Ty->isPointerTy(); }
-
 static bool stores_to_global(llvm::StoreInst *SI) {
   auto *Ptr = SI->getPointerOperand();
   return llvm::isa<llvm::GlobalVariable>(Ptr) ||
@@ -48,7 +46,7 @@ llvm::SmallVector<unsigned, 2> LeakChecker::trace_to_alloc(
     llvm::Value *V, const std::vector<AllocSite> &sites,
     llvm::DenseMap<llvm::CallInst *, const DeallocSpec *> *dealloc_calls_ptr) {
   llvm::SmallVector<unsigned, 2> result;
-  if (!is_pointer_type(V->getType()))
+  if (!V->getType()->isPointerTy())
     return result;
 
   std::deque<llvm::Value *> worklist;

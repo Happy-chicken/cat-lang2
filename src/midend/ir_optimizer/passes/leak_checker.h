@@ -102,8 +102,8 @@ private:
   std::vector<AllocSpec> alloc_specs;
   std::vector<DeallocSpec> dealloc_specs;
 
-  std::vector<AllocSite> alloc_sites;
-  llvm::DenseMap<llvm::CallInst *, const DeallocSpec *> dealloc_calls;
+  std::vector<AllocSite> alloc_sites; // alloc sites found in this function
+  llvm::DenseMap<llvm::CallInst *, const DeallocSpec *> dealloc_calls; // a call releases some pointer
 
   std::vector<llvm::DenseMap<llvm::BasicBlock *, PerBlockStates>> block_results;
   std::vector<LeakReport> reports;

@@ -52,7 +52,7 @@ void CatOptimizer::optimize(llvm::Module &module) {
     LeakChecker LC(const_cast<llvm::Function &>(F), LLDT,
                    /*strict_mode=*/false, &summaries);
     LC.run();
-    LC.dump_reports(llvm::errs());
+    // LC.dump_reports(llvm::errs());
   }
 }
 
