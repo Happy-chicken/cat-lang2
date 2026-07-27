@@ -1,4 +1,5 @@
 #include "mem2reg.h"
+#include "cfg.h"
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/CFG.h>
@@ -13,7 +14,8 @@
 
 namespace cat::opt {
 
-PromoteMem2Reg::PromoteMem2Reg(llvm::Function &F, ana::DomTree &DT, ana::DomFrontier &DF)
+PromoteMem2Reg::PromoteMem2Reg(llvm::Function &F, ana::DomTree &DT,
+                               ana::DomFrontier &DF)
     : F(F), DT(DT), DF(DF) {}
 
 // ---------------------------------------------------------------------------
@@ -53,7 +55,7 @@ void PromoteMem2Reg::compute_alloca_info(llvm::AllocaInst *AI,
                                          AllocaInfo &Info) {
   Info.Alloca = AI;
   Info.only_used_in_one_block = true;
-  Info.only_block = UINT32_MAX;
+  Info.only_block = ana::kInvalidBlockId;
   Info.only_store = nullptr;
 
   unsigned store_count = 0;
@@ -61,14 +63,14 @@ void PromoteMem2Reg::compute_alloca_info(llvm::AllocaInst *AI,
     if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(U)) {
       uint32_t bid = DT.id(LI->getParent());
       Info.using_blocks.push_back(bid);
-      if (Info.only_block == UINT32_MAX)
+      if (Info.only_block == ana::kInvalidBlockId)
         Info.only_block = bid;
       else if (Info.only_block != bid)
         Info.only_used_in_one_block = false;
     } else if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(U)) {
       uint32_t bid = DT.id(SI->getParent());
       Info.defining_blocks.push_back(bid);
-      if (Info.only_block == UINT32_MAX)
+      if (Info.only_block == ana::kInvalidBlockId)
         Info.only_block = bid;
       else if (Info.only_block != bid)
         Info.only_used_in_one_block = false;
@@ -105,7 +107,7 @@ bool PromoteMem2Reg::try_promote_single_store(AllocaInfo &Info) {
 }
 
 bool PromoteMem2Reg::try_promote_single_block(AllocaInfo &Info) {
-  if (!Info.only_used_in_one_block || Info.only_block == UINT32_MAX)
+  if (!Info.only_used_in_one_block || Info.only_block == ana::kInvalidBlockId)
     return false;
 
   auto *BB = DT.block(Info.only_block);
