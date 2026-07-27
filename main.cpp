@@ -29,27 +29,27 @@
 
 namespace cl = llvm::cl;
 
-static cl::OptionCategory CatLangOpts("catlang");
+static cl::OptionCategory catlang_opts("catlang");
 
-static cl::SubCommand RunCmd("run", "JIT compile and execute a .cat file");
-static cl::SubCommand BuildCmd("build",
+static cl::SubCommand run_cmd("run", "JIT compile and execute a .cat file");
+static cl::SubCommand build_cmd("build",
                                "AOT compile a .cat file to native executable");
 
-static cl::opt<std::string> RunInput(cl::Positional, cl::Required,
+static cl::opt<std::string> run_input(cl::Positional, cl::Required,
                                      cl::desc("<input.cat>"),
-                                     cl::cat(CatLangOpts), cl::sub(RunCmd));
+                                     cl::cat(catlang_opts), cl::sub(run_cmd));
 
-static cl::opt<std::string> BuildInput(cl::Positional, cl::Required,
+static cl::opt<std::string> build_input(cl::Positional, cl::Required,
                                        cl::desc("<input.cat>"),
-                                       cl::cat(CatLangOpts), cl::sub(BuildCmd));
+                                       cl::cat(catlang_opts), cl::sub(build_cmd));
 
 static cl::opt<std::string>
-    BuildOutput("o", cl::desc("Output executable path (default: ./a.out)"),
-                cl::init("./a.out"), cl::cat(CatLangOpts), cl::sub(BuildCmd));
+    build_output("o", cl::desc("Output executable path (default: ./a.out)"),
+                cl::init("./a.out"), cl::cat(catlang_opts), cl::sub(build_cmd));
 
-static cl::opt<bool> DumpIR("ir", cl::desc("Dump LLVM IR to out/ir.ll"),
-                            cl::init(false), cl::cat(CatLangOpts),
-                            cl::sub(RunCmd), cl::sub(BuildCmd));
+static cl::opt<bool> dump_ir("ir", cl::desc("Dump LLVM IR to out/ir.ll"),
+                            cl::init(false), cl::cat(catlang_opts),
+                            cl::sub(run_cmd), cl::sub(build_cmd));
 
 static std::string read_file(const std::string &path) {
   std::ifstream ifs(path);
@@ -115,7 +115,7 @@ static bool compile_pipeline(const std::string &source,
   cat::opt::CatOptimizer cat_opt;
   cat_opt.optimize(const_cast<llvm::Module &>(emitter.get_module()));
 
-  if (DumpIR)
+  if (dump_ir)
     dump_module_to_file(emitter);
 
   return true;
@@ -170,17 +170,17 @@ static int build(const std::string &input, const std::string &output) {
 }
 
 int main(int argc, char **argv) {
-  cl::HideUnrelatedOptions(CatLangOpts);
+  cl::HideUnrelatedOptions(catlang_opts);
   cl::ParseCommandLineOptions(argc, argv, "cat-lang compiler\n");
 
-  if (RunCmd) {
-    int rc = run(RunInput);
+  if (run_cmd) {
+    int rc = run(run_input);
     fflush(stdout);
     _Exit(rc >= 0 ? rc : EXIT_FAILURE);
   }
 
-  if (BuildCmd) {
-    int rc = build(BuildInput, BuildOutput);
+  if (build_cmd) {
+    int rc = build(build_input, build_output);
     _Exit(rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
   }
 

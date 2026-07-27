@@ -1,5 +1,6 @@
 #include "ir_emitter.h"
 #include "expr.h"
+#include "llvm_helpers.h"
 #include <llvm-20/llvm/IR/Constants.h>
 #include <llvm-20/llvm/IR/Function.h>
 #include <llvm-20/llvm/IR/GlobalVariable.h>
@@ -11,31 +12,7 @@
 
 namespace cat::ir {
 
-template <class... Ts> struct overload : Ts... {
-  using Ts::operator()...;
-};
-
 namespace {
-llvm::IntegerType *i32(llvm::LLVMContext &c) {
-  return llvm::IntegerType::getInt32Ty(c);
-}
-llvm::IntegerType *i64(llvm::LLVMContext &c) {
-  return llvm::IntegerType::getInt64Ty(c);
-}
-llvm::PointerType *ptr_ty(llvm::LLVMContext &c) {
-  return llvm::PointerType::get(c, 0);
-}
-llvm::Type *void_ty(llvm::LLVMContext &c) { return llvm::Type::getVoidTy(c); }
-
-llvm::Constant *zero_const(llvm::Type *ty) {
-  if (ty->isIntegerTy())
-    return llvm::ConstantInt::get(ty, 0);
-  if (ty->isFloatTy())
-    return llvm::ConstantFP::get(ty, 0.0);
-  if (ty->isPointerTy())
-    return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ty));
-  return llvm::Constant::getNullValue(ty);
-}
 
 string list_type_key(llvm::Type *et) {
   if (et->isIntegerTy(32))
@@ -55,6 +32,8 @@ string list_type_key(llvm::Type *et) {
   return "list.unknown";
 }
 } // namespace
+
+// ── list type helpers ──
 
 ListType *IrEmitter::lookup_or_create_list_type(llvm::Type *elem_ty) {
   auto key = list_type_key(elem_ty);
@@ -79,7 +58,8 @@ ListType *IrEmitter::lookup_list_type_by_struct(llvm::StructType *st) {
 IrEmitter::IrEmitter(const string &name, error::DiagCtxt &diag,
                      semantics::SemaCtxt &sema_ctx)
     : ctx(std::make_unique<CodeGenCtxt>(name)), env(std::make_shared<Env>()),
-      diag(diag), current_function(nullptr), sema(sema_ctx) {}
+      cleanup_mgr(*ctx), diag(diag), current_function(nullptr),
+      sema(sema_ctx) {}
 
 // ── type helpers ──
 
@@ -176,13 +156,68 @@ vector<llvm::Type *> IrEmitter::ptr_deref_chain(const ast::Type &ast_type) {
   return chain;
 }
 
+IrEmitter::ParamTypeInfo
+IrEmitter::resolve_param_type(const ast::Type &ty) {
+  auto &c = *ctx->llvm_ctx;
+  ParamTypeInfo info{};
+
+  if (auto *ref = std::get_if<ast::Type::Ref>(&ty.data)) {
+    info.is_ref = true;
+    info.param_ty = ptr_ty(c);
+    info.value_ty = ref->inner ? llvm_type(*ref->inner) : ptr_ty(c);
+  } else if (auto *own = std::get_if<ast::Type::Own>(&ty.data)) {
+    info.is_own = true;
+    info.param_ty = own->inner ? llvm_type(*own->inner) : llvm_type(ty);
+    info.value_ty = own->inner ? llvm_type(*own->inner) : llvm_type(ty);
+  } else {
+    info.param_ty = llvm_type(ty);
+    info.value_ty = info.param_ty;
+  }
+
+  return info;
+}
+
+// ── variable access helpers ──
+
+llvm::Value *IrEmitter::load_variable(const string &name, Span) {
+  auto v = env->lookup_var(name);
+  if (!v.ptr || !v.alloca_ty) {
+    if (auto *fn = ctx->module->getFunction(name))
+      return fn;
+    return nullptr;
+  }
+  auto *val = ctx->builder->CreateLoad(v.alloca_ty, v.ptr, name);
+  if (v.is_ref)
+    val = ctx->builder->CreateLoad(v.value_ty, val);
+  return val;
+}
+
+llvm::Value *IrEmitter::variable_ptr(const string &name, Span) {
+  auto vi = env->lookup_var(name);
+  if (!vi.ptr)
+    return nullptr;
+  if (vi.is_ref)
+    return ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
+  return vi.ptr;
+}
+
+void IrEmitter::invalidate_source(const ExprNode &src_expr) {
+  if (auto *var = std::get_if<Variable>(&src_expr.expr)) {
+    auto vi = env->lookup_var(var->name);
+    if (vi.ptr) {
+      ctx->builder->CreateStore(llvm::UndefValue::get(vi.alloca_ty), vi.ptr);
+      cleanup_mgr.cancel_cleanup(*env, vi.ptr);
+    }
+  }
+}
+
 llvm::Type *IrEmitter::infer_lit_type(const Expr &expr) {
   auto &c = *ctx->llvm_ctx;
   return std::visit(
-      overload{
+      overloaded{
           [&](const LiteralExpr &e) -> llvm::Type * {
             return std::visit(
-                overload{
+                overloaded{
                     [&](int64_t) -> llvm::Type * { return i32(c); },
                     [&](bool) -> llvm::Type * {
                       return llvm::IntegerType::getInt1Ty(c);
@@ -225,7 +260,7 @@ void IrEmitter::compile(const Program &program) {
 
   for (auto &item : program.items)
     std::visit(
-        overload{
+        overloaded{
             [&](const FunctionDef &f) { compile_function(f, item.span); },
             [&](const Impl &i) {
               for (auto &m : i.methods)
@@ -329,9 +364,8 @@ void IrEmitter::compile_global_var(const GlobalVar &gv, Span span) {
   llvm::Constant *cinit = nullptr;
   llvm::Type *var_ty = nullptr;
 
-  if (gv.ty) {
+  if (gv.ty)
     var_ty = llvm_type(*gv.ty);
-  }
 
   if (gv.init) {
     auto *init_val = compile_expr(*gv.init);
@@ -344,11 +378,8 @@ void IrEmitter::compile_global_var(const GlobalVar &gv, Span span) {
     }
   }
 
-  if (!var_ty) {
-    diag.error(span, "Cannot determine type for global var: " + gv.name)
-        .emit_to(diag);
+  if (!var_ty)
     return;
-  }
 
   if (!cinit) {
     if (gv.init) {
@@ -378,20 +409,14 @@ void IrEmitter::compile_method(const string &cls, const FunctionDef &func,
 }
 
 void IrEmitter::compile_named_function(const FunctionDef &func,
-                                       const string &name, Span span) {
+                                       const string &name, Span) {
   auto &c = *ctx->llvm_ctx;
   auto &hdr = func.function_header;
 
   vector<llvm::Type *> ptypes;
   for (auto &p : hdr.params) {
-    bool is_ref = std::get_if<ast::Type::Ref>(&p.ty.data) != nullptr;
-    bool is_own = std::get_if<ast::Type::Own>(&p.ty.data) != nullptr;
-    if (is_own) {
-      auto &own = std::get<ast::Type::Own>(p.ty.data);
-      ptypes.push_back(own.inner ? llvm_type(*own.inner) : llvm_type(p.ty));
-    } else {
-      ptypes.push_back(is_ref ? ptr_ty(c) : llvm_type(p.ty));
-    }
+    auto info = resolve_param_type(p.ty);
+    ptypes.push_back(info.param_ty);
   }
   auto *ret = hdr.return_type ? llvm_type(*hdr.return_type) : void_ty(c);
 
@@ -408,23 +433,30 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
     arg.setName(p.name);
     auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr, p.name);
     ctx->builder->CreateStore(&arg, a);
-    auto val_ty = llvm_type(p.ty);
-    bool is_ref = std::get_if<ast::Type::Ref>(&p.ty.data) != nullptr;
-    bool is_own = std::get_if<ast::Type::Own>(&p.ty.data) != nullptr;
-    if (is_ref) {
-      auto &ref = std::get<ast::Type::Ref>(p.ty.data);
-      val_ty = ref.inner ? llvm_type(*ref.inner) : val_ty;
-    } else if (is_own) {
-      auto &own = std::get<ast::Type::Own>(p.ty.data);
-      val_ty = own.inner ? llvm_type(*own.inner) : val_ty;
-    }
-    env->declare_var(p.name, a, arg.getType(), val_ty, is_ref,
-                     ptr_deref_chain(p.ty), is_own, llvm_func_type(p.ty));
 
-    if (!is_ref && !is_own && std::get_if<ast::Type::List>(&p.ty.data)) {
+    auto info = resolve_param_type(p.ty);
+    env->declare_var(p.name, a, info.param_ty, info.value_ty, info.is_ref,
+                     ptr_deref_chain(p.ty), info.is_own,
+                     llvm_func_type(p.ty));
+
+    if (!info.is_ref) {
+      auto kind = CleanupManager::classify_type(p.ty);
+      if (kind == CleanupKind::ClassFree)
+        cleanup_mgr.register_class_cleanup(*env, a, info.param_ty);
+      else if (kind == CleanupKind::OwnListFree) {
+        auto &own = std::get<ast::Type::Own>(p.ty.data);
+        auto &list_t = std::get<ast::Type::List>(own.inner->data);
+        auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
+        auto *st = lookup_or_create_list_type(et)->struct_ty;
+        cleanup_mgr.register_own_list_cleanup(*env, a, info.param_ty, st);
+      }
+    }
+
+    if (!info.is_ref && !info.is_own &&
+        std::get_if<ast::Type::List>(&p.ty.data)) {
       auto &list_t = std::get<ast::Type::List>(p.ty.data);
       auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
-      auto *st = llvm::cast<llvm::StructType>(arg.getType());
+      auto *st = llvm::cast<llvm::StructType>(info.param_ty);
       auto &b = *ctx->builder;
       auto *len_val = b.CreateExtractValue(&arg, {0u});
       auto *old_data = b.CreateExtractValue(&arg, {2u});
@@ -437,6 +469,7 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
                                              {ptr_ty(c), ptr_ty(c), i64(c)});
       b.CreateCall(memcpy_fn, {new_data, old_data, total});
       b.CreateStore(new_data, b.CreateStructGEP(st, a, 2u));
+      cleanup_mgr.register_list_cleanup(*env, a, info.param_ty, st);
     }
 
     ++i;
@@ -444,6 +477,7 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
 
   compile_block(func.body);
   if (!ctx->builder->GetInsertBlock()->getTerminator()) {
+    cleanup_mgr.emit_scope_cleanup(*env);
     if (ret->isVoidTy())
       ctx->builder->CreateRetVoid();
     else
@@ -457,17 +491,8 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
   auto &c = *ctx->llvm_ctx;
 
   vector<llvm::Type *> ptypes;
-  for (size_t i = 0; i < lambda.params.size(); ++i) {
-    auto &pt = lambda.params[i].ty;
-    bool is_ref = std::get_if<ast::Type::Ref>(&pt.data) != nullptr;
-    bool is_own = std::get_if<ast::Type::Own>(&pt.data) != nullptr;
-    if (is_own) {
-      auto &own = std::get<ast::Type::Own>(pt.data);
-      ptypes.push_back(own.inner ? llvm_type(*own.inner) : llvm_type(pt));
-    } else {
-      ptypes.push_back(is_ref ? ptr_ty(c) : llvm_type(pt));
-    }
-  }
+  for (auto &p : lambda.params)
+    ptypes.push_back(resolve_param_type(p.ty).param_ty);
   auto *ret = lambda.return_type ? llvm_type(*lambda.return_type) : void_ty(c);
   auto *ft = llvm::FunctionType::get(ret, ptypes, false);
 
@@ -483,28 +508,26 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
   unordered_set<string> param_set(view.begin(), view.end());
 
   unordered_set<string> captured;
-  if (lambda.body) {
-    for (auto &stmt : lambda.body->stmts) {
+  if (lambda.body)
+    for (auto &stmt : lambda.body->stmts)
       collect_free_vars(stmt, param_set, captured);
-    }
-  }
 
   unordered_map<string, llvm::GlobalVariable *> capture_globals;
   for (auto &cap_name : captured) {
     auto vi = env->lookup_var(cap_name);
     if (!vi.ptr)
       continue;
-    auto *ptr_ty = llvm::PointerType::get(c, 0);
+    auto *p_ty = llvm::PointerType::get(c, 0);
     auto *gv = new llvm::GlobalVariable(
-        *ctx->module, ptr_ty, false, llvm::GlobalValue::InternalLinkage,
-        llvm::ConstantPointerNull::get(ptr_ty), name + "_cap_" + cap_name);
+        *ctx->module, p_ty, false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantPointerNull::get(p_ty), name + "_cap_" + cap_name);
     ctx->builder->restoreIP(saved_insert);
     if (vi.is_ref) {
       auto *ref_ptr = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
       ctx->builder->CreateStore(ref_ptr, gv);
     } else {
       auto *el_ty = vi.alloca_ty;
-      auto *malloc_fn = declare_runtime_func("malloc", ptr_ty, {i64(c)});
+      auto *malloc_fn = declare_runtime_func("malloc", p_ty, {i64(c)});
       auto *sz = llvm::ConstantExpr::getTruncOrBitCast(
           llvm::ConstantExpr::getSizeOf(el_ty), i64(c));
       auto *heap_ptr =
@@ -518,27 +541,18 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
   }
 
   ctx->builder->SetInsertPoint(llvm::BasicBlock::Create(c, "entry", fn));
-
   EnvGuard guard(*this, std::make_shared<Env>(env));
 
   for (size_t i = 0; auto &arg : fn->args()) {
-    arg.setName(lambda.params[i].name);
-    auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr,
-                                         lambda.params[i].name);
+    auto &p = lambda.params[i];
+    arg.setName(p.name);
+    auto *a = ctx->builder->CreateAlloca(arg.getType(), nullptr, p.name);
     ctx->builder->CreateStore(&arg, a);
-    auto &pt = lambda.params[i].ty;
-    auto val_ty = llvm_type(pt);
-    bool is_ref = std::get_if<ast::Type::Ref>(&pt.data) != nullptr;
-    bool is_own = std::get_if<ast::Type::Own>(&pt.data) != nullptr;
-    if (is_ref) {
-      auto &ref = std::get<ast::Type::Ref>(pt.data);
-      val_ty = ref.inner ? llvm_type(*ref.inner) : val_ty;
-    } else if (is_own) {
-      auto &own = std::get<ast::Type::Own>(pt.data);
-      val_ty = own.inner ? llvm_type(*own.inner) : val_ty;
-    }
-    env->declare_var(lambda.params[i].name, a, arg.getType(), val_ty, is_ref,
-                     ptr_deref_chain(pt), is_own, llvm_func_type(pt));
+
+    auto info = resolve_param_type(p.ty);
+    env->declare_var(p.name, a, info.param_ty, info.value_ty, info.is_ref,
+                     ptr_deref_chain(p.ty), info.is_own,
+                     llvm_func_type(p.ty));
     ++i;
   }
 
@@ -553,6 +567,7 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
   if (lambda.body)
     compile_block(*lambda.body);
   if (!ctx->builder->GetInsertBlock()->getTerminator()) {
+    cleanup_mgr.emit_scope_cleanup(*env);
     if (ret->isVoidTy())
       ctx->builder->CreateRetVoid();
     else
@@ -565,10 +580,10 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
   return fn;
 }
 
-void IrEmitter::collect_free_vars(const StmtNode &stmt,
-                                  const std::unordered_set<std::string> &params,
-                                  std::unordered_set<std::string> &captured) {
-  std::visit(overload{
+void IrEmitter::collect_free_vars(
+    const StmtNode &stmt, const unordered_set<string> &params,
+    unordered_set<string> &captured) {
+  std::visit(overloaded{
                  [&](const VarDefStmt &s) {
                    if (s.init)
                      collect_free_vars_expr(*s.init, params, captured);
@@ -609,9 +624,9 @@ void IrEmitter::collect_free_vars(const StmtNode &stmt,
 }
 
 void IrEmitter::collect_free_vars_expr(
-    const ExprNode &expr, const std::unordered_set<std::string> &params,
-    std::unordered_set<std::string> &captured) {
-  std::visit(overload{
+    const ExprNode &expr, const unordered_set<string> &params,
+    unordered_set<string> &captured) {
+  std::visit(overloaded{
                  [&](const Variable &v) {
                    if (params.find(v.name) == params.end())
                      captured.insert(v.name);
@@ -644,7 +659,7 @@ void IrEmitter::collect_free_vars_expr(
                    for (auto &e : l.elements)
                      collect_free_vars_expr(*e, params, captured);
                  },
-                 [&](const LambdaExpr &f) {},
+                 [&](const LambdaExpr &) {},
              },
              expr.expr);
 }
@@ -661,73 +676,121 @@ void IrEmitter::compile_block(const Block &block) {
 
 void IrEmitter::compile_stmt(const StmtNode &sn) {
   std::visit(
-      overload{
-          [&](const VarDefStmt &s) {
-            llvm::Value *iv = s.init ? compile_expr(*s.init) : nullptr;
-            llvm::Type *vt = iv     ? iv->getType()
-                             : s.ty ? llvm_type(*s.ty)
-                                    : i32(*ctx->llvm_ctx);
-            if (llvm::isa<llvm::FunctionType>(vt)) {
-              vt = llvm::PointerType::get(vt, 0);
-            }
-            auto *a = ctx->builder->CreateAlloca(vt, nullptr, s.name);
-            if (iv)
-              ctx->builder->CreateStore(iv, a);
-            else
-              ctx->builder->CreateStore(llvm::Constant::getNullValue(vt), a);
-
-            bool is_ref = s.ty && std::get_if<ast::Type::Ref>(&s.ty->data);
-            bool is_own = s.ty && std::get_if<ast::Type::Own>(&s.ty->data);
-            llvm::FunctionType *func_ty = nullptr;
-            if (s.ty) {
-              func_ty = llvm_func_type(*s.ty);
-            } else if (iv && llvm::isa<llvm::Function>(iv)) {
-              auto *fn = llvm::cast<llvm::Function>(iv);
-              func_ty = fn->getFunctionType();
-            } else if (s.init &&
-                       std::holds_alternative<CallExpr>(s.init->expr)) {
-              if (auto *sym = sema.get_symbol_table().resolve(s.name)) {
-                if (sym->get_type().has_value()) {
-                  func_ty = llvm_func_type(*sym->get_type());
-                }
-              }
-            }
-            env->declare_var(s.name, a, vt, vt, is_ref,
-                             s.ty ? ptr_deref_chain(*s.ty)
-                                  : vector<llvm::Type *>{},
-                             is_own, func_ty);
-
-            if (s.ty && std::get_if<ast::Type::Own>(&s.ty->data)) {
-              if (auto *var = std::get_if<Variable>(&s.init->expr))
-                if (auto vi = env->lookup_var(var->name); vi.ptr)
-                  ctx->builder->CreateStore(llvm::UndefValue::get(vi.alloca_ty),
-                                            vi.ptr);
-            }
-          },
+      overloaded{
+          [&](const VarDefStmt &s) { compile_var_def(s); },
           [&](const IfStmt &s) { compile_if(s); },
           [&](const LoopStmt &s) { compile_while(s); },
           [&](const ExprStmt &s) { (void)compile_expr(s.expr); },
           [&](const ReturnStmt &s) {
-            if (!s.expr.has_value()) {
-              ctx->builder->CreateRetVoid();
-            } else if (auto *v = compile_expr(*s.expr)) {
-              ctx->builder->CreateRet(v);
+            llvm::Value *ret_val = nullptr;
+            if (s.expr) {
+              ret_val = compile_expr(*s.expr);
+              if (!ret_val)
+                return;
             }
+            cleanup_mgr.emit_all_cleanups(*env);
+            if (s.expr)
+              ctx->builder->CreateRet(ret_val);
+            else
+              ctx->builder->CreateRetVoid();
           },
           [&](const BreakStmt &) {
-            if (auto lp = env->lookup_loop())
+            if (auto lp = env->lookup_loop()) {
+              cleanup_mgr.emit_until_loop(*env);
               ctx->builder->CreateBr(lp->exit_bb);
+            }
           },
           [&](const ContinueStmt &) {
-            if (auto lp = env->lookup_loop())
+            if (auto lp = env->lookup_loop()) {
+              cleanup_mgr.emit_until_loop(*env);
               ctx->builder->CreateBr(lp->cond_bb);
+            }
           },
           [&](const BlockStmt &s) {
             EnvGuard g(*this, std::make_shared<Env>(env));
             compile_block(*s.block);
+            cleanup_mgr.emit_scope_cleanup(*env);
           },
       },
       sn.stmt);
+}
+
+void IrEmitter::compile_var_def(const VarDefStmt &s) {
+  auto &c = *ctx->llvm_ctx;
+
+  llvm::Value *init_val = s.init ? compile_expr(*s.init) : nullptr;
+  llvm::Type *alloca_ty =
+      init_val   ? init_val->getType()
+      : s.ty     ? llvm_type(*s.ty)
+                 : i32(c);
+  if (llvm::isa<llvm::FunctionType>(alloca_ty))
+    alloca_ty = llvm::PointerType::get(alloca_ty, 0);
+
+  auto *a = ctx->builder->CreateAlloca(alloca_ty, nullptr, s.name);
+  ctx->builder->CreateStore(
+      init_val ? init_val : llvm::Constant::getNullValue(alloca_ty), a);
+
+  bool is_ref = s.ty && std::get_if<ast::Type::Ref>(&s.ty->data);
+  bool is_own = s.ty && std::get_if<ast::Type::Own>(&s.ty->data);
+
+  llvm::FunctionType *func_ty = nullptr;
+  if (s.ty) {
+    func_ty = llvm_func_type(*s.ty);
+  } else if (init_val && llvm::isa<llvm::Function>(init_val)) {
+    func_ty = llvm::cast<llvm::Function>(init_val)->getFunctionType();
+  } else if (s.init && std::holds_alternative<CallExpr>(s.init->expr)) {
+    if (auto *sym = sema.get_symbol_table().resolve(s.name))
+      if (sym->get_type().has_value())
+        func_ty = llvm_func_type(*sym->get_type());
+  }
+
+  env->declare_var(s.name, a, alloca_ty, alloca_ty, is_ref,
+                   s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{},
+                   is_own, func_ty);
+
+  bool registered_cleanup = false;
+
+  if (s.ty && !is_ref) {
+    auto kind = CleanupManager::classify_type(*s.ty);
+    switch (kind) {
+    case CleanupKind::ClassFree:
+      cleanup_mgr.register_class_cleanup(*env, a, alloca_ty);
+      registered_cleanup = true;
+      break;
+    case CleanupKind::ListDataFree:
+      if (auto *st = llvm::dyn_cast<llvm::StructType>(alloca_ty)) {
+        cleanup_mgr.register_list_cleanup(*env, a, alloca_ty, st);
+        registered_cleanup = true;
+      }
+      break;
+    case CleanupKind::OwnListFree: {
+      auto &own = std::get<ast::Type::Own>(s.ty->data);
+      auto &list_t = std::get<ast::Type::List>(own.inner->data);
+      auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
+      auto *st = lookup_or_create_list_type(et)->struct_ty;
+      cleanup_mgr.register_own_list_cleanup(*env, a, alloca_ty, st);
+      registered_cleanup = true;
+      break;
+    }
+    case CleanupKind::None:
+      break;
+    }
+  } else if (!s.ty && init_val && init_val->getType()->isPointerTy() &&
+             !llvm::isa<llvm::Function>(init_val)) {
+    cleanup_mgr.register_class_cleanup(*env, a, alloca_ty);
+    registered_cleanup = true;
+  }
+
+  if (is_own) {
+    if (s.init)
+      invalidate_source(*s.init);
+  } else if (registered_cleanup && s.init && !s.ty) {
+    if (auto *var = std::get_if<Variable>(&s.init->expr)) {
+      auto vi = env->lookup_var(var->name);
+      if (vi.ptr && !vi.is_ref)
+        invalidate_source(*s.init);
+    }
+  }
 }
 
 void IrEmitter::compile_if(const IfStmt &s) {
@@ -829,22 +892,9 @@ llvm::Value *IrEmitter::compile_expr(const ExprNode &expr_node) {
   auto &expr = expr_node.expr;
   auto &span = expr_node.span;
   return std::visit(
-      overload{
+      overloaded{
           [&](const LiteralExpr &e) { return compile_literal(e); },
-          [&](const Variable &e) -> llvm::Value * {
-            auto v = env->lookup_var(e.name);
-            if (!v.ptr || !v.alloca_ty) {
-              auto *fn = ctx->module->getFunction(e.name);
-              if (fn)
-                return fn;
-              diag.error(span, "Undefined variable: " + e.name).emit_to(diag);
-              return llvm::Constant::getNullValue(i32(*ctx->llvm_ctx));
-            }
-            auto *val = ctx->builder->CreateLoad(v.alloca_ty, v.ptr, e.name);
-            if (v.is_ref)
-              val = ctx->builder->CreateLoad(v.value_ty, val);
-            return val;
-          },
+          [&](const Variable &e) { return load_variable(e.name, span); },
           [&](const AssignExpr &e) { return compile_assignment(e); },
           [&](const BinaryExpr &e) { return compile_binary(e); },
           [&](const UnaryExpr &e) { return compile_unary(e); },
@@ -866,7 +916,7 @@ llvm::Value *IrEmitter::compile_expr(const ExprNode &expr_node) {
 llvm::Value *IrEmitter::compile_literal(const LiteralExpr &lit) {
   auto &c = *ctx->llvm_ctx;
   return std::visit(
-      overload{
+      overloaded{
           [&](int64_t v) -> llvm::Value * {
             if (static_cast<int64_t>(static_cast<int32_t>(v)) != v)
               diag.error(Span{}, "Integer literal out of i32 range: " +
@@ -930,12 +980,9 @@ llvm::Value *IrEmitter::compile_unary(const UnaryExpr &u) {
   switch (u.op) {
   case UnaryOp::AddrOf: {
     return std::visit(
-        overload{
+        overloaded{
             [&](const Variable &var) -> llvm::Value * {
-              auto vi = env->lookup_var(var.name);
-              if (vi.is_ref)
-                return ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
-              return vi.ptr;
+              return variable_ptr(var.name, u.expr->span);
             },
             [&](const MemberExpr &) -> llvm::Value * {
               return compile_member_ptr(*u.expr);
@@ -960,18 +1007,14 @@ llvm::Value *IrEmitter::compile_unary(const UnaryExpr &u) {
         u.expr->expr);
   }
   case UnaryOp::Deref: {
-    // *&e  ->  e  (addr-of cancelled by deref)
-    // TODO:
-    if (auto *inner = std::get_if<UnaryExpr>(&u.expr->expr)) {
+    if (auto *inner = std::get_if<UnaryExpr>(&u.expr->expr))
       if (inner->op == UnaryOp::AddrOf)
         return compile_expr(*inner->expr);
-    }
 
     auto *ptr_val = compile_expr(*u.expr);
     if (!ptr_val)
       return nullptr;
 
-    // walk deref chain to find root variable + depth
     int depth = 1;
     const ExprNode *cur = u.expr.get();
     while (true) {
@@ -991,8 +1034,6 @@ llvm::Value *IrEmitter::compile_unary(const UnaryExpr &u) {
         elem_ty = vi.deref_chain[depth - 1];
     }
     if (!elem_ty) {
-      // fallback: if we have a pointer value, try to deref based on deref_chain
-      // from any known var
       if (auto *var = std::get_if<Variable>(&u.expr->expr)) {
         auto vi = env->lookup_var(var->name);
         if (!vi.deref_chain.empty())
@@ -1025,64 +1066,15 @@ llvm::Value *IrEmitter::compile_unary(const UnaryExpr &u) {
 
 llvm::Value *IrEmitter::compile_call(const CallExpr &call, Span span) {
   return std::visit(
-      overload{
+      overloaded{
           [&](const Variable &callee) -> llvm::Value * {
-            auto *fn = ctx->module->getFunction(callee.name);
-            bool is_ctor = false;
-            if (!fn) {
-              fn = ctx->module->getFunction(callee.name + "_ctor");
-              is_ctor = true;
-            }
-            if (fn) {
-              ClassInfo *ctor_info = nullptr;
-              if (is_ctor) {
-                auto it = ctx->class_registry.find(callee.name);
-                if (it != ctx->class_registry.end())
-                  ctor_info = it->second.get();
-              }
+            auto *direct = ctx->module->getFunction(callee.name);
+            auto *ctor = ctx->module->getFunction(callee.name + "_ctor");
+            if (direct || ctor)
+              return compile_direct_or_ctor_call(callee, call, span);
 
-              auto args = compile_args(fn, call.args, 0, ctor_info);
-
-              auto *call_inst = ctx->builder->CreateCall(fn, args);
-              if (!is_ctor)
-                invalidate_owned_args(callee.name, call.args, 0);
-              return call_inst;
-            }
-
-            if (env->has_var(callee.name)) {
-              auto vi = env->lookup_var(callee.name);
-              if (!vi.ptr) {
-                diag.error(span, "Undefined function: " + callee.name)
-                    .emit_to(diag);
-                return nullptr;
-              }
-              auto *fn_ptr = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
-              auto *fn_ty = vi.func_ty;
-
-              if (!fn_ty) {
-                diag.error(span, "Cannot determine function type for indirect "
-                                 "call of '" +
-                                     callee.name + "'")
-                    .emit_to(diag);
-                return nullptr;
-              }
-
-              vector<llvm::Value *> args;
-              args.reserve(call.args.size());
-              for (size_t i = 0; i < call.args.size(); ++i) {
-                auto *arg_val = compile_expr(*call.args[i]);
-                if (!arg_val)
-                  return nullptr;
-                auto *param_ty = fn_ty->getParamType(static_cast<unsigned>(i));
-                if (param_ty->isPointerTy() && arg_val &&
-                    !arg_val->getType()->isPointerTy())
-                  if (auto *var = std::get_if<Variable>(&call.args[i]->expr))
-                    if (auto vi = env->lookup_var(var->name); vi.ptr)
-                      arg_val = vi.ptr;
-                args.push_back(arg_val);
-              }
-              return ctx->builder->CreateCall(fn_ty, fn_ptr, args);
-            }
+            if (env->has_var(callee.name))
+              return compile_indirect_call(callee, call, span);
 
             if (auto desc =
                     sema.get_builtins().lookup_standalone(callee.name)) {
@@ -1093,94 +1085,130 @@ llvm::Value *IrEmitter::compile_call(const CallExpr &call, Span span) {
                   return nullptr;
                 args.push_back(arg_val);
               }
-              runtime::IrGenParams params{
-                  *ctx->builder, *ctx->module, *ctx->llvm_ctx,
-                  [this](const string &name, llvm::Type *ret,
-                         vector<llvm::Type *> param_tys, bool va) {
-                    return declare_runtime_func(name, ret, param_tys, va);
-                  },
-                  diag};
-              return desc->get().ir_generate(params, args, span);
+              return desc->get().emit(make_ir_gen_context(), args, span);
             }
 
-            diag.error(span, "Undefined function: " + callee.name)
-                .emit_to(diag);
             return nullptr;
           },
           [&](const MemberExpr &callee) -> llvm::Value * {
-            auto *self = compile_expr(*callee.object);
-            if (!self)
-              return nullptr;
-
-            // builtin list methods
-            if (auto *st = llvm::dyn_cast<llvm::StructType>(self->getType()))
-              if (auto *lt = lookup_list_type_by_struct(st))
-                if (auto desc =
-                        sema.get_builtins().lookup("list", callee.field))
-                  return emit_builtin_method(desc->get(), lt, st,
-                                             *callee.object, call.args, span);
-
-            string mangled = callee.field;
-            for (auto &kv : ctx->class_registry) {
-              auto it = kv.second->methods.find(callee.field);
-              if (it != kv.second->methods.end()) {
-                mangled = it->second;
-                break;
-              }
-            }
-            auto *fn = ctx->module->getFunction(mangled);
-            if (!fn) {
-              diag.error(span, "Undefined method: " + mangled).emit_to(diag);
-              return nullptr;
-            }
-
-            auto args = compile_args(fn, call.args, 1);
-            args.insert(args.begin(), self);
-
-            auto *call_inst = ctx->builder->CreateCall(fn, args);
-
-            if (auto *obj_var = std::get_if<Variable>(&callee.object->expr)) {
-              auto *fn_sym = sema.get_symbol_table().resolve(mangled);
-              auto *fn_data =
-                  fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind())
-                         : nullptr;
-              if (fn_data && fn_data->params.size() > 0 &&
-                  std::get_if<ast::Type::Own>(&fn_data->params[0].data))
-                if (auto vi = env->lookup_var(obj_var->name); vi.ptr)
-                  ctx->builder->CreateStore(llvm::UndefValue::get(vi.alloca_ty),
-                                            vi.ptr);
-            }
-            invalidate_owned_args(mangled, call.args, 1);
-            return call_inst;
+            return compile_method_call(callee, call, span);
           },
-          [&](const auto &) -> llvm::Value * {
-            diag.error(span, "Invalid call expression").emit_to(diag);
-            return nullptr;
-          },
+          [&](const auto &) -> llvm::Value * { return nullptr; },
       },
       call.callee->expr);
+}
+
+llvm::Value *
+IrEmitter::compile_direct_or_ctor_call(const Variable &callee,
+                                       const CallExpr &call, Span) {
+  bool is_ctor = false;
+  auto *fn = ctx->module->getFunction(callee.name);
+  if (!fn) {
+    fn = ctx->module->getFunction(callee.name + "_ctor");
+    is_ctor = true;
+  }
+
+  ClassInfo *ctor_info = nullptr;
+  if (is_ctor) {
+    auto it = ctx->class_registry.find(callee.name);
+    if (it != ctx->class_registry.end())
+      ctor_info = it->second.get();
+  }
+
+  auto args = compile_args(fn, call.args, 0, ctor_info);
+  auto *call_inst = ctx->builder->CreateCall(fn, args);
+  if (!is_ctor)
+    invalidate_owned_args(callee.name, call.args, 0);
+  return call_inst;
+}
+
+llvm::Value *
+IrEmitter::compile_indirect_call(const Variable &callee, const CallExpr &call,
+                                 Span) {
+  auto vi = env->lookup_var(callee.name);
+  if (!vi.ptr || !vi.func_ty)
+    return nullptr;
+
+  auto *fn_ptr = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
+  auto *fn_ty = vi.func_ty;
+
+  vector<llvm::Value *> args;
+  args.reserve(call.args.size());
+  for (size_t i = 0; i < call.args.size(); ++i) {
+    auto *arg_val = compile_expr(*call.args[i]);
+    if (!arg_val)
+      return nullptr;
+    auto *param_ty = fn_ty->getParamType(static_cast<unsigned>(i));
+    if (param_ty->isPointerTy() && !arg_val->getType()->isPointerTy())
+      if (auto *var = std::get_if<Variable>(&call.args[i]->expr))
+        if (auto vi2 = env->lookup_var(var->name); vi2.ptr)
+          arg_val = vi2.ptr;
+    args.push_back(arg_val);
+  }
+  return ctx->builder->CreateCall(fn_ty, fn_ptr, args);
+}
+
+llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
+                                            const CallExpr &call, Span span) {
+  auto *self = compile_expr(*callee.object);
+  if (!self)
+    return nullptr;
+
+  if (auto *st = llvm::dyn_cast<llvm::StructType>(self->getType()))
+    if (auto *lt = lookup_list_type_by_struct(st))
+      if (auto desc = sema.get_builtins().lookup(runtime::LIST_TAG, callee.field))
+        return emit_builtin_method(desc->get(), lt, st, *callee.object,
+                                   call.args, span);
+
+  string mangled = callee.field;
+  for (auto &kv : ctx->class_registry) {
+    auto it = kv.second->methods.find(callee.field);
+    if (it != kv.second->methods.end()) {
+      mangled = it->second;
+      break;
+    }
+  }
+  auto *fn = ctx->module->getFunction(mangled);
+  if (!fn)
+    return nullptr;
+
+  auto args = compile_args(fn, call.args, 1);
+  args.insert(args.begin(), self);
+  auto *call_inst = ctx->builder->CreateCall(fn, args);
+
+  if (auto *obj_var = std::get_if<Variable>(&callee.object->expr)) {
+    auto *fn_sym = sema.get_symbol_table().resolve(mangled);
+    auto *fn_data =
+        fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind()) : nullptr;
+    if (fn_data && !fn_data->params.empty() &&
+        std::get_if<ast::Type::Own>(&fn_data->params[0].data))
+      invalidate_source(*callee.object);
+  }
+  invalidate_owned_args(mangled, call.args, 1);
+  return call_inst;
 }
 
 vector<llvm::Value *>
 IrEmitter::compile_args(llvm::Function *fn, const vector<uptr<ExprNode>> &args,
                         size_t param_offset, const ClassInfo *ctor_info) {
   vector<llvm::Value *> out;
-  size_t total =
-      ctor_info ? fn->getFunctionType()->getNumParams() : args.size();
-  for (size_t i = 0;
-       i + param_offset < fn->getFunctionType()->getNumParams() && i < total;
-       ++i) {
+  size_t n_params = fn->getFunctionType()->getNumParams();
+  size_t total = ctor_info ? n_params : args.size();
+
+  for (size_t i = 0; i + param_offset < n_params && i < total; ++i) {
     if (ctor_info && i >= args.size()) {
       if (i < ctor_info->field_defaults.size() && ctor_info->field_defaults[i])
         out.push_back(compile_expr(**ctor_info->field_defaults[i]));
       else
-        out.push_back(zero_const(fn->getFunctionType()->getParamType(
-            static_cast<unsigned>(i + param_offset))));
+        out.push_back(zero_const(
+            fn->getFunctionType()->getParamType(
+                static_cast<unsigned>(i + param_offset))));
       continue;
     }
     auto *arg_val = compile_expr(*args[i]);
-    auto *param_ty = fn->getFunctionType()->getParamType(
-        static_cast<unsigned>(i + param_offset));
+    auto *param_ty =
+        fn->getFunctionType()->getParamType(
+            static_cast<unsigned>(i + param_offset));
     if (param_ty->isPointerTy() && arg_val &&
         !arg_val->getType()->isPointerTy())
       if (auto *var = std::get_if<Variable>(&args[i]->expr))
@@ -1203,9 +1231,7 @@ void IrEmitter::invalidate_owned_args(const string &fn_name,
        i < args.size() && (i + param_offset) < fn_data->params.size(); ++i) {
     if (!std::get_if<ast::Type::Own>(&fn_data->params[i + param_offset].data))
       continue;
-    if (auto *var = std::get_if<Variable>(&args[i]->expr))
-      if (auto vi = env->lookup_var(var->name); vi.ptr)
-        ctx->builder->CreateStore(llvm::UndefValue::get(vi.alloca_ty), vi.ptr);
+    invalidate_source(*args[i]);
   }
 }
 
@@ -1213,45 +1239,58 @@ llvm::Value *IrEmitter::compile_assignment(const AssignExpr &a) {
   auto *val = compile_expr(*a.value);
   if (!val)
     return nullptr;
-  std::visit(overload{
-                 [&](const Variable &t) {
-                   auto vi = env->lookup_var(t.name);
-                   if (!vi.ptr)
-                     return;
-                   if (vi.is_ref) {
-                     auto *dst = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
-                     ctx->builder->CreateStore(val, dst);
-                   } else {
-                     ctx->builder->CreateStore(val, vi.ptr);
-                   }
-                   if (vi.is_own)
-                     if (auto *src_var = std::get_if<Variable>(&a.value->expr))
-                       if (auto sv = env->lookup_var(src_var->name); sv.ptr)
-                         ctx->builder->CreateStore(
-                             llvm::UndefValue::get(sv.alloca_ty), sv.ptr);
-                 },
-                 [&](const MemberExpr &) {
-                   if (auto *p = compile_member_ptr(*a.target))
-                     ctx->builder->CreateStore(val, p);
-                 },
-                 [&](const IndexExpr &) {
-                   if (auto *p = compile_index_ptr(*a.target))
-                     ctx->builder->CreateStore(val, p);
-                 },
-                 [&](const UnaryExpr &u) {
-                   if (u.op == UnaryOp::Deref) {
-                     auto *ptr = compile_expr(*u.expr);
-                     if (ptr)
-                       ctx->builder->CreateStore(val, ptr);
-                   }
-                 },
-                 [](const auto &) {},
-             },
-             a.target->expr);
+  std::visit(
+      overloaded{
+          [&](const Variable &t) {
+            auto vi = env->lookup_var(t.name);
+            if (!vi.ptr)
+              return;
+            bool self_assign =
+                std::holds_alternative<Variable>(a.value->expr) &&
+                std::get<Variable>(a.value->expr).name == t.name;
+            if (!vi.is_ref && !self_assign)
+              cleanup_mgr.emit_var_free(*env, vi.ptr);
+            if (vi.is_ref) {
+              auto *dst = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
+              ctx->builder->CreateStore(val, dst);
+            } else {
+              ctx->builder->CreateStore(val, vi.ptr);
+            }
+            if (!vi.is_ref && !self_assign) {
+              if (auto *st = llvm::dyn_cast<llvm::StructType>(val->getType());
+                  st && lookup_list_type_by_struct(st))
+                cleanup_mgr.register_list_cleanup(*env, vi.ptr, vi.alloca_ty,
+                                                  st);
+              else if (val->getType()->isPointerTy() &&
+                       !llvm::isa<llvm::Function>(val))
+                cleanup_mgr.register_class_cleanup(*env, vi.ptr, vi.alloca_ty);
+            }
+            if (vi.is_own)
+              invalidate_source(*a.value);
+          },
+          [&](const MemberExpr &) {
+            if (auto *p = compile_member_ptr(*a.target))
+              ctx->builder->CreateStore(val, p);
+          },
+          [&](const IndexExpr &) {
+            if (auto *p = compile_index_ptr(*a.target))
+              ctx->builder->CreateStore(val, p);
+          },
+          [&](const UnaryExpr &u) {
+            if (u.op == UnaryOp::Deref) {
+              auto *ptr = compile_expr(*u.expr);
+              if (ptr)
+                ctx->builder->CreateStore(val, ptr);
+            }
+          },
+          [](const auto &) {},
+      },
+      a.target->expr);
   return val;
 }
 
 // ── member / index access ──
+
 llvm::Value *IrEmitter::compile_member_access(const ExprNode &obj,
                                               const string &field) {
   auto *obj_val = compile_expr(obj);
@@ -1269,7 +1308,7 @@ llvm::Value *IrEmitter::compile_member_access(const ExprNode &obj,
 }
 
 llvm::Value *IrEmitter::compile_member_ptr(const ExprNode &e) {
-  return std::visit(overload{
+  return std::visit(overloaded{
                         [&](const MemberExpr &m) -> llvm::Value * {
                           auto *ov = compile_expr(*m.object);
                           if (!ov)
@@ -1318,7 +1357,7 @@ llvm::Value *IrEmitter::compile_index(const ExprNode &obj,
 
 llvm::Value *IrEmitter::compile_index_ptr(const ExprNode &e) {
   return std::visit(
-      overload{
+      overloaded{
           [&](const IndexExpr &ie) -> llvm::Value * {
             auto *ov = compile_expr(*ie.object);
             auto *iv = compile_expr(*ie.index);
@@ -1372,7 +1411,7 @@ void IrEmitter::emit_bounds_check(llvm::Value *ix, llvm::Value *len, Span) {
 
 llvm::Value *
 IrEmitter::emit_list_literal(const vector<uptr<ExprNode>> &elements,
-                             Span span) {
+                             Span) {
   auto &c = *ctx->llvm_ctx;
   vector<llvm::Value *> vals;
   vals.reserve(elements.size());
@@ -1385,12 +1424,10 @@ IrEmitter::emit_list_literal(const vector<uptr<ExprNode>> &elements,
         et = v->getType();
     }
   }
-  if (vals.size() != elements.size() && vals.empty()) {
+  if (vals.size() != elements.size() && vals.empty())
     vals.resize(elements.size(), llvm::Constant::getNullValue(et));
-  }
 
   auto *entry = lookup_or_create_list_type(et);
-
   auto *a = ctx->builder->CreateAlloca(entry->struct_ty, nullptr, "list");
   size_t n = vals.size();
   auto *len = llvm::ConstantInt::get(i64(c), n);
@@ -1470,12 +1507,9 @@ llvm::Value *IrEmitter::emit_builtin_method(
     const runtime::BuiltinMethodDesc &desc, ListType *lt, llvm::StructType *st,
     const ExprNode &obj_expr, const vector<uptr<ExprNode>> &args, Span span) {
   auto *list_ptr =
-      std::visit(overload{
+      std::visit(overloaded{
                      [&](const Variable &var) -> llvm::Value * {
-                       auto vi = env->lookup_var(var.name);
-                       if (vi.is_ref)
-                         return ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
-                       return vi.ptr;
+                       return variable_ptr(var.name, obj_expr.span);
                      },
                      [](const auto &) -> llvm::Value * { return nullptr; },
                  },
@@ -1495,15 +1529,8 @@ llvm::Value *IrEmitter::emit_builtin_method(
     arg_vals.push_back(v);
   }
 
-  runtime::IrGenParams params{*ctx->builder, *ctx->module, *ctx->llvm_ctx,
-                              [this](const string &name, llvm::Type *ret,
-                                     vector<llvm::Type *> param_tys, bool va) {
-                                return declare_runtime_func(name, ret,
-                                                            param_tys, va);
-                              },
-                              diag};
-
-  return desc.ir_generate(params, list_ptr, st, lt->elem_ty, arg_vals, span);
+  return desc.emit(make_ir_gen_context(), list_ptr, st, lt->elem_ty,
+                          arg_vals, span);
 }
 
 llvm::Value *IrEmitter::emit_string_literal(const string &s) {
@@ -1517,6 +1544,10 @@ void IrEmitter::dump_module(std::ostream &os) {
   llvm::raw_string_ostream rso(s);
   ctx->module->print(rso, nullptr);
   os << rso.str();
+}
+
+runtime::IrGenCtxtRef IrEmitter::make_ir_gen_context() {
+  return {*ctx->builder, *ctx->module};
 }
 
 IrEmitter::ModuleHandle IrEmitter::release_module() {

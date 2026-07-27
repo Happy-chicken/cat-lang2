@@ -1,11 +1,14 @@
 #pragma once
 #include "common.h"
+#include <cstddef>
 #include <functional>
+#include <llvm-20/llvm/ADT/ArrayRef.h>
 #include <llvm-20/llvm/IR/IRBuilder.h>
 #include <llvm-20/llvm/IR/LLVMContext.h>
 #include <llvm-20/llvm/IR/Module.h>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -28,59 +31,71 @@ struct Span;
 
 namespace cat::runtime {
 
-struct IrGenParams {
+inline constexpr std::string_view LIST_TAG = "list";
+
+// ── IR generation context ──
+
+struct IrGenCtxtRef {
   llvm::IRBuilder<> &builder;
   llvm::Module &module;
-  llvm::LLVMContext &llvm_ctx;
-  std::function<llvm::Function *(const std::string &, llvm::Type *,
-                                 std::vector<llvm::Type *>, bool)>
-      declare_runtime;
-  error::DiagCtxt &diag;
+  // error::DiagCtxt &diag;
+
+  auto ctx() const -> llvm::LLVMContext & { return builder.getContext(); }
+
+  auto declare_runtime(std::string_view name, llvm::Type *ret,
+                       std::vector<llvm::Type *> param_tys,
+                       bool var_arg = false) const -> llvm::Function *;
 };
 
-using IrGenFunc = std::function<llvm::Value *(
-    const IrGenParams &p, llvm::Value *self_alloca, llvm::StructType *st,
-    llvm::Type *elem_ty, const std::vector<llvm::Value *> &args, Span span)>;
+// ── callable types ──
 
-using FuncTypeBuilder =
-    std::function<semantics::Type(const semantics::Type &elem_ty)>;
+using MethodEmitter = std::function<llvm::Value *(
+    const IrGenCtxtRef &, llvm::Value *self_ptr, llvm::StructType *,
+    llvm::Type *elem_ty, llvm::ArrayRef<llvm::Value *> args, Span span)>;
+
+using FuncEmitter = std::function<llvm::Value *(
+    const IrGenCtxtRef &, llvm::ArrayRef<llvm::Value *> args, Span span)>;
+
+using MethodType = std::function<semantics::Type(const semantics::Type &)>;
+
+using FuncType = std::function<semantics::Type()>;
+
+// ── descriptors ──
 
 struct BuiltinMethodDesc {
   std::string name;
   size_t arity;
-  FuncTypeBuilder build_func_type;
-  IrGenFunc ir_generate;
+  MethodType build_func_type;
+  MethodEmitter emit;
 };
-
-using StandaloneFuncTypeBuilder = std::function<semantics::Type()>;
-
-using IrGenStandaloneFunc = std::function<llvm::Value *(
-    const IrGenParams &p, const std::vector<llvm::Value *> &args, Span span)>;
 
 struct BuiltinFuncDesc {
   std::string name;
   size_t arity;
-  StandaloneFuncTypeBuilder build_func_type;
-  IrGenStandaloneFunc ir_generate;
+  FuncType build_func_type;
+  FuncEmitter emit;
 };
+
+// ── registry ──
 
 class BuiltinRegistry {
 public:
-  void register_type(const std::string &tag,
+  void register_type(std::string_view tag,
                      std::vector<BuiltinMethodDesc> methods);
 
   void register_func(BuiltinFuncDesc desc);
 
-  std::optional<std::reference_wrapper<const BuiltinMethodDesc>>
-  lookup(const std::string &tag, const std::string &method) const;
+  auto lookup(std::string_view tag,
+              std::string_view method) const
+      -> std::optional<std::reference_wrapper<const BuiltinMethodDesc>>;
 
-  bool is_method_declared(const std::string &tag,
-                          const std::string &method) const;
+  auto is_method_declared(std::string_view tag,
+                          std::string_view method) const -> bool;
 
-  std::optional<std::reference_wrapper<const BuiltinFuncDesc>>
-  lookup_standalone(const std::string &name) const;
+  auto lookup_standalone(std::string_view name) const
+      -> std::optional<std::reference_wrapper<const BuiltinFuncDesc>>;
 
-  bool is_standalone_declared(const std::string &name) const;
+  auto is_standalone_declared(std::string_view name) const -> bool;
 
   void init_defaults();
 

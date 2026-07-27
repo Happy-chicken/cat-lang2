@@ -1,12 +1,14 @@
 #pragma once
 #include "codegen_ctx.h"
-#include <llvm-20/llvm/ADT/StringMap.h>
+#include "cleanup.h"
+
 namespace cat::ir {
 
 struct Env {
   sptr<Env> parent;
   llvm::StringMap<VarInfo> locals;
   optional<LoopInfo> loop_info;
+  vector<CleanupInfo> cleanups;
 
   Env() = default;
   explicit Env(sptr<Env> p) : parent(std::move(p)) {}
@@ -45,6 +47,23 @@ struct Env {
     if (parent)
       return parent->lookup_loop();
     return std::nullopt;
+  }
+
+  void add_cleanup(llvm::Value *a, llvm::Type *aty, bool is_class,
+                   llvm::StructType *list_st = nullptr,
+                   bool free_base_ptr = false) {
+    cleanups.push_back({a, aty, is_class, list_st, false, free_base_ptr});
+  }
+
+  bool cancel_cleanup(llvm::Value *a) {
+    for (auto &c : cleanups)
+      if (c.alloca == a) {
+        c.cancelled = true;
+        return true;
+      }
+    if (parent)
+      return parent->cancel_cleanup(a);
+    return false;
   }
 };
 

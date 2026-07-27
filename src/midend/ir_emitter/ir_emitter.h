@@ -1,6 +1,7 @@
 #pragma once
 #include "../../frontend/ast/type.h"
 #include "builtin_registry.h"
+#include "cleanup.h"
 #include "codegen_ctx.h"
 #include "common.h"
 #include "diag.h"
@@ -113,9 +114,33 @@ private:
                              const vector<uptr<ExprNode>> &args,
                              size_t param_offset);
 
+  struct ParamTypeInfo {
+    llvm::Type *param_ty = nullptr;
+    llvm::Type *value_ty = nullptr;
+    bool is_ref = false;
+    bool is_own = false;
+  };
+  ParamTypeInfo resolve_param_type(const ast::Type &ty);
+
+  llvm::Value *load_variable(const string &name, Span span);
+  llvm::Value *variable_ptr(const string &name, Span span);
+
+  void invalidate_source(const ExprNode &src_expr);
+  void compile_var_def(const VarDefStmt &s);
+
+  runtime::IrGenCtxtRef make_ir_gen_context();
+
+  llvm::Value *compile_direct_or_ctor_call(const Variable &callee,
+                                           const CallExpr &call, Span span);
+  llvm::Value *compile_indirect_call(const Variable &callee,
+                                     const CallExpr &call, Span span);
+  llvm::Value *compile_method_call(const MemberExpr &callee,
+                                   const CallExpr &call, Span span);
+
 private:
   uptr<CodeGenCtxt> ctx;
   sptr<Env> env;
+  CleanupManager cleanup_mgr;
   error::DiagCtxt &diag;
   llvm::Function *current_function;
   semantics::SemaCtxt &sema;

@@ -59,4 +59,5 @@ struct CodeGenCtxt {
 
   CodeGenCtxt(const string &module_name);
 };
+
 } // namespace cat::ir

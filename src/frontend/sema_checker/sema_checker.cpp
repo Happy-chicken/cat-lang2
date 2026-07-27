@@ -316,7 +316,7 @@ static optional<CallTargetInfo> resolve_method_target(const string &func_name,
 
   // list builtin
   if (std::get_if<ast::Type::List>(&ty.data)) {
-    if (ctx.get_builtins().is_method_declared("list", func_name))
+    if (ctx.get_builtins().is_method_declared(runtime::LIST_TAG, func_name))
       return CallTargetInfo{func_name, func_name, true};
     diag.error(span, "Unknown list method '" + func_name + "'").emit_to(diag);
     return std::nullopt;
@@ -333,7 +333,7 @@ static optional<CallTargetInfo> resolve_method_target(const string &func_name,
 static void check_builtin_arity(const string &func_name, size_t arg_count,
                                 Span span, semantics::SemaCtxt &ctx,
                                 error::DiagCtxt &diag) {
-  auto desc = ctx.get_builtins().lookup("list", func_name);
+  auto desc = ctx.get_builtins().lookup(runtime::LIST_TAG, func_name);
   if (desc && arg_count != desc->get().arity) {
     diag.error(span, "'" + func_name + "' expects " +
                          std::to_string(desc->get().arity) +

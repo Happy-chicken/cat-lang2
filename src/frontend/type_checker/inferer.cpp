@@ -471,7 +471,7 @@ namespace cat::semantics {
     if (auto *list_ty = std::get_if<Type::List>(&resolved.get_data())) {
       auto elem = list_ty->inner ? list_ty->inner->clone() : Type::error();
 
-      auto desc = ctxt.get_builtins().lookup("list", member.field);
+      auto desc = ctxt.get_builtins().lookup(cat::runtime::LIST_TAG, member.field);
       if (desc) {
         return desc->get().build_func_type(elem);
       }
