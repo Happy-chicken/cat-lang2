@@ -776,7 +776,8 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
       break;
     }
   } else if (!s.ty && init_val && init_val->getType()->isPointerTy() &&
-             !llvm::isa<llvm::Function>(init_val)) {
+             !llvm::isa<llvm::Function>(init_val) &&
+             !llvm::isa<llvm::Constant>(init_val)) { // global str like format, we don't want to free it
     cleanup_mgr.register_class_cleanup(*env, a, alloca_ty);
     registered_cleanup = true;
   }

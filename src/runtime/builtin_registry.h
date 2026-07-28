@@ -72,6 +72,7 @@ struct BuiltinMethodDesc {
 struct BuiltinFuncDesc {
   std::string name;
   size_t arity;
+  bool is_variadic = false;
   FuncType build_func_type;
   FuncEmitter emit;
 };

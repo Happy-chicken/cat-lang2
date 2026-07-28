@@ -453,8 +453,23 @@ static void check_call_expr(const CallExpr &call, Span span,
   if (!sym) {
     if (ctx.get_builtins().is_standalone_declared(func_name)) {
       auto desc = ctx.get_builtins().lookup_standalone(func_name);
-      if (desc && desc->get().arity != 0 &&
-          call.args.size() != desc->get().arity) {
+      if (desc && desc->get().is_variadic) {
+        if (call.args.size() < desc->get().arity) {
+          diag.error(span, "'" + func_name + "' expects at least " +
+                               std::to_string(desc->get().arity) +
+                               " arguments, got " +
+                               std::to_string(call.args.size()))
+              .emit_to(diag);
+        } else {
+          // TODO: check format string placeholders for variadic builtins like print
+          return;
+          // diag.error(span, "'" + func_name + "' placeholder of format string mismatch")
+          //     .note("you provided more arguments than placeholders in the format string")
+          //     .emit_to(diag);
+                         
+        }
+      } else if (desc && desc->get().arity != 0 &&
+                 call.args.size() != desc->get().arity) {
         diag.error(span, "'" + func_name + "' expects " +
                              std::to_string(desc->get().arity) +
                              " arguments, got " +
