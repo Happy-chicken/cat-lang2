@@ -35,11 +35,11 @@ static cl::SubCommand run_cmd("run", "JIT compile and execute a .cat file");
 static cl::SubCommand build_cmd("build",
                                "AOT compile a .cat file to native executable");
 
-static cl::opt<std::string> run_input(cl::Positional, cl::Required,
+static cl::opt<std::string> run_input(cl::Positional, cl::init("main.cat"),
                                      cl::desc("<input.cat>"),
                                      cl::cat(catlang_opts), cl::sub(run_cmd));
 
-static cl::opt<std::string> build_input(cl::Positional, cl::Required,
+static cl::opt<std::string> build_input(cl::Positional, cl::init("main.cat"),
                                        cl::desc("<input.cat>"),
                                        cl::cat(catlang_opts), cl::sub(build_cmd));
 
