@@ -21,7 +21,8 @@ void BuiltinRegistry::register_type(std::string_view tag,
     methods_[{tag_str, m.name}] = std::move(m);
 }
 
-auto BuiltinRegistry::lookup(std::string_view tag, std::string_view method) const
+auto BuiltinRegistry::lookup(std::string_view tag,
+                             std::string_view method) const
     -> std::optional<std::reference_wrapper<const BuiltinMethodDesc>> {
   auto it = methods_.find({std::string{tag}, std::string{method}});
   if (it == methods_.end())

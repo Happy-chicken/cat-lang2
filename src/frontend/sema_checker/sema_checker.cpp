@@ -453,6 +453,20 @@ static void check_call_expr(const CallExpr &call, Span span,
   if (!sym) {
     if (ctx.get_builtins().is_standalone_declared(func_name)) {
       auto desc = ctx.get_builtins().lookup_standalone(func_name);
+      // traet print and pritnln
+      if (func_name == "print" || func_name == "println") {
+        if (auto *lit = std::get_if<cat::LiteralExpr>(&call.args[0]->expr)) {
+          if (!std::get_if<std::string>(&lit->lit)) {
+            diag.error(span, "'" + func_name +
+                                 "' expects a fmt string at the first position")
+                .emit_to(diag);
+          }
+        } else {
+          diag.error(span, "'" + func_name +
+                               "' expects a fmt string at the first position")
+              .emit_to(diag);
+        }
+      }
       if (desc && desc->get().is_variadic) {
         if (call.args.size() < desc->get().arity) {
           diag.error(span, "'" + func_name + "' expects at least " +
@@ -461,12 +475,14 @@ static void check_call_expr(const CallExpr &call, Span span,
                                std::to_string(call.args.size()))
               .emit_to(diag);
         } else {
-          // TODO: check format string placeholders for variadic builtins like print
+          // TODO: check format string placeholders for variadic
+          // builtins like print
           return;
-          // diag.error(span, "'" + func_name + "' placeholder of format string mismatch")
-          //     .note("you provided more arguments than placeholders in the format string")
+          // diag.error(span, "'" + func_name + "' placeholder of
+          // format string mismatch")
+          //     .note("you provided more arguments than
+          //     placeholders in the format string")
           //     .emit_to(diag);
-                         
         }
       } else if (desc && desc->get().arity != 0 &&
                  call.args.size() != desc->get().arity) {
@@ -554,8 +570,7 @@ void SemaChecker::check_expr(const ExprNode &expr, Span span,
             auto sym = ctx.get_symbol_table().resolve(var.name);
             if (!sym) {
               if (!ctx.get_builtins().is_standalone_declared(var.name)) {
-                diag.error(span, "Variable '" + var.name +
-                                     "' is not declared")
+                diag.error(span, "Variable '" + var.name + "' is not declared")
                     .emit_to(diag);
               }
             }

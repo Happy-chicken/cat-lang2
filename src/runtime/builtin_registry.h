@@ -86,12 +86,11 @@ public:
 
   void register_func(BuiltinFuncDesc desc);
 
-  auto lookup(std::string_view tag,
-              std::string_view method) const
+  auto lookup(std::string_view tag, std::string_view method) const
       -> std::optional<std::reference_wrapper<const BuiltinMethodDesc>>;
 
-  auto is_method_declared(std::string_view tag,
-                          std::string_view method) const -> bool;
+  auto is_method_declared(std::string_view tag, std::string_view method) const
+      -> bool;
 
   auto lookup_standalone(std::string_view name) const
       -> std::optional<std::reference_wrapper<const BuiltinFuncDesc>>;

@@ -48,7 +48,7 @@ static std::string extract_format_string(llvm::Value *val) {
 }
 
 static std::string build_printf_format(const std::string &raw_fmt,
-                                        llvm::ArrayRef<llvm::Value *> args) {
+                                       llvm::ArrayRef<llvm::Value *> args) {
   std::string result;
   size_t arg_idx = 0;
   for (size_t i = 0; i < raw_fmt.size(); ++i) {
@@ -77,9 +77,10 @@ static std::string build_printf_format(const std::string &raw_fmt,
 static llvm::Value *emit_formatted(const IrGenCtxtRef &ctx,
                                    llvm::ArrayRef<llvm::Value *> args,
                                    bool newline) {
+  // TODO: we now dont have to generate origin fmt;
   auto raw_fmt = extract_format_string(args[0]);
-  auto *fn =  ctx.declare_runtime("printf", cat::ir::i32(ctx.ctx()),
-                             {cat::ir::ptr_ty(ctx.ctx())}, true);
+  auto *fn = ctx.declare_runtime("printf", cat::ir::i32(ctx.ctx()),
+                                 {cat::ir::ptr_ty(ctx.ctx())}, true);
   auto var_args = args.slice(1);
 
   if (raw_fmt.empty()) {
@@ -107,15 +108,6 @@ auto emit_print(const IrGenCtxtRef &ctx, llvm::ArrayRef<llvm::Value *> args,
   if (args.empty())
     return nullptr;
 
-  auto &c = ctx.ctx();
-  auto *fn =  ctx.declare_runtime("printf", cat::ir::i32(c),
-                             {cat::ir::ptr_ty(c)}, true);
-  if (!args[0]->getType()->isPointerTy()) {
-    auto *fmt = ctx.builder.CreateGlobalString("%d\n");
-    return ctx.builder.CreateCall(fn, {fmt, args[0]});
-  }
-  if (args.size() == 1)
-    return ctx.builder.CreateCall(fn, args);
   return emit_formatted(ctx, args, false);
 }
 
@@ -125,12 +117,6 @@ auto emit_println(const IrGenCtxtRef &ctx, llvm::ArrayRef<llvm::Value *> args,
     return nullptr;
 
   auto &c = ctx.ctx();
-  if (!args[0]->getType()->isPointerTy()) {
-    auto *fmt = ctx.builder.CreateGlobalString("%d\n");
-    auto *fn =  ctx.declare_runtime("printf", cat::ir::i32(c),
-                             {cat::ir::ptr_ty(c)}, true);
-    return ctx.builder.CreateCall(fn, {fmt, args[0]});
-  }
   if (args.size() == 1) {
     auto *puts_fn = ctx.declare_runtime("puts", cat::ir::i32(c),
                                         {cat::ir::ptr_ty(c)}, false);
