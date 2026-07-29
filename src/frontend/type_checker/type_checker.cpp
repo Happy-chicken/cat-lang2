@@ -1,5 +1,6 @@
 #include "type_checker.h"
 #include "../ast/type.h"
+#include "symbol.h"
 #include "type.h"
 #include "unifier.h"
 #include <optional>
@@ -26,10 +27,10 @@ static optional<ast::Type> semantic_type_to_ast_type(const Type &ty) {
             return std::nullopt;
           },
           [](const Type::StructType &struct_type) -> optional<ast::Type> {
-            std::visit(
+            return std::visit(
                 overloaded{
                     [&](const Type::StructType::Str &str)->optional<ast::Type> {
-                      return ast::type_str(str.length);
+                      return ast::type_str();
                     },
                     [&](const Type::StructType::List &list)->optional<ast::Type> {
                       auto inner = semantic_type_to_ast_type(*list.inner);
@@ -46,7 +47,6 @@ static optional<ast::Type> semantic_type_to_ast_type(const Type &ty) {
                     [&](const auto &) -> optional<ast::Type> { return std::nullopt; },
                 },
                 struct_type.get_data());
-            return std::nullopt;
           },
           [&](const Type::Ptr &ptr) -> optional<ast::Type> {
             auto inner = semantic_type_to_ast_type(*ptr.inner);
@@ -58,6 +58,13 @@ static optional<ast::Type> semantic_type_to_ast_type(const Type &ty) {
             auto inner = semantic_type_to_ast_type(*ref.inner);
             if (inner.has_value()) {
               return ast::type_ref(inner->clone());
+            }
+            return std::nullopt;
+          },
+          [&](const Type::CRef &cref) -> optional<ast::Type> {
+            auto inner = semantic_type_to_ast_type(*cref.inner);
+            if (inner.has_value()) {
+              return ast::type_cref(inner->clone());
             }
             return std::nullopt;
           },
@@ -97,10 +104,18 @@ void TypeChecker::check_function(const FunctionDef &func, Span span,
   ctx.get_symbol_table().enter_scope(ScopeKind::Function);
 
   for (const auto &param : func.function_header.params) {
-    bool is_ref = std::get_if<ast::Type::Ref>(&param.ty.data) != nullptr;
-    bool is_own = std::get_if<ast::Type::Own>(&param.ty.data) != nullptr;
+    sym::BorrrowKind kind = std::visit(
+      overloaded{
+          [](const ast::Type::Ref&)  { return sym::BorrrowKind::isRef; },
+          [](const ast::Type::CRef&) { return sym::BorrrowKind::isCRef; },
+          [](const ast::Type::Own&)  { return sym::BorrrowKind::isOwn; },
+          [](const auto&)            { return sym::BorrrowKind::None; }
+      },
+      param.ty.data
+    );
+
     Symbol param_sym = Symbol::new_parameter(param.name, param.ty.clone(),
-                                             is_ref, is_own, span);
+                                             kind, span);
     ctx.get_symbol_table().declare(std::move(param_sym));
   }
 
@@ -141,13 +156,24 @@ void TypeChecker::check_stmt(const StmtNode &stmt_node, Span span,
               stored_type = semantic_type_to_ast_type(
                   ctx.get_type_ctxt().resolve_type(inferred));
             }
-            bool var_is_ref =
-                std::get_if<ast::Type::Ref>(&stored_type->data) != nullptr;
-            bool var_is_own =
-                std::get_if<ast::Type::Own>(&stored_type->data) != nullptr;
+            if (!stored_type.has_value()) {
+              diag.error(span, "Failed to deduce a concrete type for variable '" +
+                                    var_def.name + "'" + inferred.to_string())
+                  .emit_to(diag);
+              return;
+            }
+            sym::BorrrowKind kind = std::visit(
+              overloaded{
+                  [](const ast::Type::Ref&)  { return sym::BorrrowKind::isRef; },
+                  [](const ast::Type::CRef&) { return sym::BorrrowKind::isCRef; },
+                  [](const ast::Type::Own&)  { return sym::BorrrowKind::isOwn; },
+                  [](const auto&)            { return sym::BorrrowKind::None; }
+              },
+              stored_type->data
+            );
             Symbol var_sym =
                 Symbol::new_variable(var_def.name, std::move(stored_type),
-                                     false, span, var_is_ref, var_is_own);
+                                     false, span, kind);
             ctx.get_symbol_table().declare(std::move(var_sym));
           },
           [&](const IfStmt &if_stmt) {

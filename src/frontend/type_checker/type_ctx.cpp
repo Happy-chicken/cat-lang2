@@ -1,4 +1,5 @@
 #include "type_ctx.h"
+#include "type.h"
 #include <unordered_set>
 
 namespace cat::semantics {
@@ -37,7 +38,10 @@ Type TypeCtxt::resolve_type(const Type &ty) const {
                           return Type::list(self(self, *inner.inner));
                       }
                       return Type::list(Type::error());
-                  } else {
+                  } else if constexpr(std::is_same_v<I, Type::StructType::Str>){
+                    return Type::str();
+                  }
+                  else {
                       return Type(Type::StructType(inner));
                   }
               },

@@ -37,7 +37,6 @@ public:
   class StructType { 
     public:
     struct Str {
-      uint32_t length;
     }; 
     struct List {
       uptr<Type> inner;
@@ -86,7 +85,7 @@ public:
 
   static Type prim(PrimType kind) { return Type(Prim{kind}); }
   static Type var(uint32_t id) { return Type(Var{id}); }
-  static Type str(uint32_t length) { return Type(StructType(StructType::Str{length})); }
+  static Type str() { return Type(StructType(StructType::Str{})); }
   static Type list(Type inner) {
     return Type(StructType(StructType::List{std::make_unique<Type>(std::move(inner))}));
   }
@@ -106,7 +105,6 @@ public:
     return Type(
         Func{std::move(params), std::make_unique<Type>(std::move(ret))});
   }
-  static Type type_str(uint32_t length) { return Type(StructType(StructType::Str{length})); }
   static Type class_(string name) { return Type(StructType(StructType::Class{std::move(name)})); }
   static Type trait(string name) { return Type(StructType(StructType::TraitObject{std::move(name)})); }
   static Type error() { return Type(Error{}); }

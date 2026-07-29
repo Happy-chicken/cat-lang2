@@ -14,7 +14,7 @@ namespace {
 auto build_print_type() -> semantics::Type {
   std::vector<std::unique_ptr<semantics::Type>> params;
   params.push_back(std::make_unique<semantics::Type>(
-      semantics::Type::type_str(0)));
+      semantics::Type::str()));
   return semantics::Type::func(
       std::move(params), semantics::Type::prim(semantics::PrimType::Void));
 }

@@ -15,7 +15,7 @@ struct Type {
   struct Float {};
   struct Bool {};
   struct Char {};
-  struct Str { uint32_t length; };
+  struct Str {};
   struct Void {};
 
   struct Ptr {
@@ -212,7 +212,7 @@ inline Type type_float() { return Type(Type::Float{}); }
 inline Type type_bool() { return Type(Type::Bool{}); }
 inline Type type_char() { return Type(Type::Char{}); }
 // TODO: parse str length from type string
-inline Type type_str(uint32_t length = 0) { return Type(Type::Str{length}); }
+inline Type type_str() { return Type(); }
 inline Type type_void() { return Type(Type::Void{}); }
 
 inline Type type_ptr(Type inner) {

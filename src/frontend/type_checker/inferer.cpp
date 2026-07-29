@@ -38,7 +38,7 @@ namespace cat::semantics {
               return Type::own(ast_type_to_semantic_type(*own.inner));
             },
             [](const ast::Type::Str &str) -> Type {
-              return Type::str(str.length);
+              return Type::str();
             },
             [](const ast::Type::List &list) -> Type {
               return Type::list(ast_type_to_semantic_type(*list.inner));
@@ -167,8 +167,8 @@ namespace cat::semantics {
             [](bool) -> Type { return Type::prim(PrimType::Bool); },
             [](float) -> Type { return Type::prim(PrimType::Float); },
             [](char) -> Type { return Type::prim(PrimType::Char); },
-            [](const std::string &s) -> Type {
-              return Type::type_str(s.size());
+            [](const std::string &) -> Type {
+              return Type::str();
             },
         },
         lit.lit
@@ -191,6 +191,8 @@ namespace cat::semantics {
                 auto ty = ast_type_to_semantic_type(*sym->get_type());
                 if (auto *ref = std::get_if<Type::Ref>(&ty.get_data()))
                   return ref->inner ? ref->inner->clone() : Type::error();
+                if (auto *cref = std::get_if<Type::CRef>(&ty.get_data()))
+                  return cref->inner ? cref->inner->clone() : Type::error();
                 if (auto *own = std::get_if<Type::Own>(&ty.get_data()))
                   return own->inner ? own->inner->clone() : Type::error();
                 return ty;
@@ -202,6 +204,8 @@ namespace cat::semantics {
                 auto ty = ast_type_to_semantic_type(*sym->get_type());
                 if (auto *ref = std::get_if<Type::Ref>(&ty.get_data()))
                   return ref->inner ? ref->inner->clone() : Type::error();
+                if (auto *cref = std::get_if<Type::CRef>(&ty.get_data()))
+                  return cref->inner ? cref->inner->clone() : Type::error();
                 if (auto *own = std::get_if<Type::Own>(&ty.get_data()))
                   return own->inner ? own->inner->clone() : Type::error();
                 return ty;
@@ -342,6 +346,11 @@ namespace cat::semantics {
             return ref->inner->clone();
           }
         }
+        if (auto *cref = std::get_if<Type::CRef>(&resolved.get_data())) {
+          if (cref->inner) {
+            return cref->inner->clone();
+          }
+        }
         if (auto *own = std::get_if<Type::Own>(&resolved.get_data())) {
           if (own->inner) {
             return own->inner->clone();
@@ -396,12 +405,20 @@ namespace cat::semantics {
           auto inner_expected = ref_exp->inner ? ref_exp->inner->clone() : Type::error();
           auto result = unifier.unify(resolved_arg, inner_expected);
           ok = !std::holds_alternative<error::UnifyError>(result);
+        } else if (auto *cref_exp = std::get_if<Type::CRef>(&resolved_expected.get_data())) {
+          auto inner_expected = cref_exp->inner ? cref_exp->inner->clone() : Type::error();
+          auto result = unifier.unify(resolved_arg, inner_expected);
+          ok = !std::holds_alternative<error::UnifyError>(result);
         } else if (auto *own_exp = std::get_if<Type::Own>(&resolved_expected.get_data())) {
           auto inner_expected = own_exp->inner ? own_exp->inner->clone() : Type::error();
           auto result = unifier.unify(resolved_arg, inner_expected);
           ok = !std::holds_alternative<error::UnifyError>(result);
         } else if (auto *ref_arg = std::get_if<Type::Ref>(&resolved_arg.get_data())) {
           auto inner_arg = ref_arg->inner ? ref_arg->inner->clone() : Type::error();
+          auto result = unifier.unify(inner_arg, resolved_expected);
+          ok = !std::holds_alternative<error::UnifyError>(result);
+        } else if (auto *cref_arg = std::get_if<Type::CRef>(&resolved_arg.get_data())) {
+          auto inner_arg = cref_arg->inner ? cref_arg->inner->clone() : Type::error();
           auto result = unifier.unify(inner_arg, resolved_expected);
           ok = !std::holds_alternative<error::UnifyError>(result);
         } else if (auto *own_arg = std::get_if<Type::Own>(&resolved_arg.get_data())) {

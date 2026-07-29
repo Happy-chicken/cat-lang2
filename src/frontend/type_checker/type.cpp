@@ -1,6 +1,8 @@
 #include "type.h"
+#include "type_checker.h"
 #include <sstream>
 #include <type_traits>
+#include <variant>
 
 namespace cat::semantics {
 
@@ -18,6 +20,9 @@ Type Type::clone() const {
         } else if constexpr (std::is_same_v<T, Ref>) {
           return Type(
               Ref{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
+        } else if constexpr (std::is_same_v<T, CRef>) {
+          return Type(
+              CRef{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
         } else if constexpr (std::is_same_v<T, Own>) {
           return Type(
               Own{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
@@ -32,24 +37,21 @@ Type Type::clone() const {
                    std::make_unique<Type>(v.ret ? v.ret->clone() : Type())});
         } else if constexpr (std::is_same_v<T, StructType>) {
           StructType cloned = std::visit(
-              [](const auto &innner) -> StructType {
-                using InnerT = std::decay_t<decltype(innner)>;
-                if constexpr (std::is_same_v<InnerT, StructType::Class>) {
-                  return StructType(StructType::Class{innner.name});
-                } else if constexpr (std::is_same_v<InnerT, StructType::TraitObject>) {
-                  return StructType(StructType::TraitObject{innner.name});
-                } else if constexpr (std::is_same_v<InnerT, StructType::Str>) {
-                  return StructType(StructType::Str{innner.length});
-                } else if constexpr (std::is_same_v<InnerT, StructType::List>) {
-                  return StructType(StructType::List{
-                      std::make_unique<Type>(innner.inner ? innner.inner->clone() : Type())});
-                } else if constexpr (std::is_same_v<InnerT, StructType::Str>) {
-                  return StructType(StructType::Str{innner.length});
-                } else {
-                  return innner; // For other variants
-                }
-              },
-              v.get_data());
+            [](const auto &innner) -> StructType {
+              using InnerT = std::decay_t<decltype(innner)>;
+              if constexpr (std::is_same_v<InnerT, StructType::Class>) {
+                return StructType(StructType::Class{innner.name});
+              } else if constexpr (std::is_same_v<InnerT, StructType::TraitObject>) {
+                return StructType(StructType::TraitObject{innner.name});
+              } else if constexpr (std::is_same_v<InnerT, StructType::Str>) {
+                return StructType(StructType::Str{});
+              } else if constexpr (std::is_same_v<InnerT, StructType::List>) {
+                return StructType(StructType::List{
+                    std::make_unique<Type>(innner.inner ? innner.inner->clone() : Type())});
+              }
+            },
+            v.get_data());
+          return Type(std::move(cloned));
         }
         else { // Error
           return Type(Error{});
@@ -142,6 +144,8 @@ string Type::to_string() const {
           return "ptr<" + (v.inner ? v.inner->to_string() : string("?")) + ">";
         } else if constexpr (std::is_same_v<T, Ref>) {
           return "ref<" + (v.inner ? v.inner->to_string() : string("?")) + ">";
+        } else if constexpr (std::is_same_v<T, CRef>) {
+          return "cref<" + (v.inner ? v.inner->to_string() : string("?")) + ">";
         } else if constexpr (std::is_same_v<T, Own>) {
           return "own<" + (v.inner ? v.inner->to_string() : string("?")) + ">";
         } else if constexpr (std::is_same_v<T, Func>) {
@@ -155,21 +159,14 @@ string Type::to_string() const {
           oss << ") -> " << (v.ret ? v.ret->to_string() : string("?"));
           return oss.str();
         } else if constexpr (std::is_same_v<T, StructType>) {
-          [](const auto &inner) -> string {
-            using I = std::decay_t<decltype(inner)>;
-            if constexpr (std::is_same_v<I, StructType::Str>) {
-                return "str[" + std::to_string(inner.length) + "]";
-            } else if constexpr (std::is_same_v<I, StructType::List>) {
-                return "list<" + (inner.inner ? inner.inner->to_string() : "?") + ">";
-            } else if constexpr (std::is_same_v<I, StructType::Class>) {
-                return inner.name;
-            } else if constexpr (std::is_same_v<I, StructType::TraitObject>) {
-                return "dyn " + inner.name;
-            }
-            return "{unknown struct}";
-          }(v.get_data());
-        }  else { // Error
-          return "{error}";
+          return std::visit(overloaded{
+            [](const StructType::Str &) { return string("str"); },
+            [](const StructType::List &l) { return "list<" + (l.inner ? l.inner->to_string() : "?") + ">"; },
+            [](const StructType::Class &c) { return c.name; },
+            [](const StructType::TraitObject &t) { return "dyn " + t.name; }
+          }, v.get_data());
+        } else {
+          return "error type";
         }
       },
       data);

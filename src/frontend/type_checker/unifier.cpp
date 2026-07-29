@@ -88,10 +88,9 @@ error::UnifyResult<semantics::Type> Unifier::unify(const Type &t1,
                 return std::visit(overloaded{
                   [&](const Type::StructType::Str &stra,
                     const Type::StructType::Str &strb)
-                    -> error::UnifyResult<semantics::Type> {
-                    if (stra.length == strb.length)
-                        return a.clone();  // 或 return Type::str(stra.length);
-                    return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+                    -> error::UnifyResult<semantics::Type> {  
+                      return a.clone();  // 或 return Type::str(stra.length);
+                    // return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
                   },
                   [&](const Type::StructType::List &la,
                     const Type::StructType::List &lb)
