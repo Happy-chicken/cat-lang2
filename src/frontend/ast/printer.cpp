@@ -79,6 +79,9 @@ std::string type_to_string(const Type &type) {
                  [&](const Type::Ref &t) {
                    ss << "Ref<" << type_to_string(*t.inner) << ">";
                  },
+                 [&](const Type::CRef &t) {
+                   ss << "CRef<" << type_to_string(*t.inner) << ">";
+                 },
                  [&](const Type::Own &t) {
                    ss << "Own<" << type_to_string(*t.inner) << ">";
                  },

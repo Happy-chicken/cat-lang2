@@ -898,6 +898,16 @@ error::ParseResult<ast::Type> Parser::parse_type() {
     consume(TokenKind::Greater, "Expected '>' after reference type.");
     return type_ref(std::move(*referent_type));
   }
+  case TokenKind::CRef: {
+    advance();
+    consume(TokenKind::Less, "Expected '<' after 'cref'.");
+    auto referent_type = parse_type();
+    if (!referent_type.has_value()) {
+      return std::nullopt;
+    }
+    consume(TokenKind::Greater, "Expected '>' after const reference type.");
+    return type_cref(std::move(*referent_type));
+  }
   case TokenKind::Own: {
     advance();
     consume(TokenKind::Less, "Expected '<' after 'own'.");

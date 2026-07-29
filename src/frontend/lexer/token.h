@@ -61,7 +61,8 @@ namespace cat {
     // none
     None,
     // refernce
-    Ref,
+    Ref, // exclusive reference
+    CRef, // read-only reference
     // move
     Own,
     // pointer
@@ -201,6 +202,8 @@ namespace cat {
         return "None";
       case Ref:
         return "Ref";
+      case CRef:
+        return "CRef";
       case Own:
         return "Own";
       case Ptr:

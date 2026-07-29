@@ -25,6 +25,10 @@ struct Type {
     uptr<Type> inner;
   };
 
+  struct CRef {
+    uptr<Type> inner;
+  };
+
   struct Own {
     uptr<Type> inner;
   };
@@ -42,7 +46,7 @@ struct Type {
     string name;
   };
 
-  using Variant = std::variant<Int, Float, Bool, Char, Str, Void, Ptr, Ref, Own,
+  using Variant = std::variant<Int, Float, Bool, Char, Str, Void, Ptr, Ref, CRef, Own,
                                List, Func, Class>;
 
   Variant data;
@@ -68,7 +72,8 @@ struct Type {
             return false;
           } else {
             if constexpr (std::is_same_v<T, Ptr> || std::is_same_v<T, Ref> ||
-                          std::is_same_v<T, Own> || std::is_same_v<T, List>) {
+                          std::is_same_v<T, CRef> || std::is_same_v<T, Own> || 
+                          std::is_same_v<T, List>) {
               if (!a.inner && !b.inner)
                 return true;
               if (!a.inner || !b.inner)
@@ -119,6 +124,7 @@ struct Type {
             return Type(Void{});
           } else if constexpr (std::is_same_v<T, Ptr> ||
                                std::is_same_v<T, Ref> ||
+                               std::is_same_v<T, CRef> ||
                                std::is_same_v<T, Own> ||
                                std::is_same_v<T, List>) {
             return Type(std::decay_t<decltype(v)>{
@@ -168,7 +174,10 @@ struct Type {
             return "list<" + (v.inner ? v.inner->to_string() : "?") + ">";
           } else if constexpr (std::is_same_v<T, Type::Ref>) {
             return "ref<" + (v.inner ? v.inner->to_string() : "?") + ">";
-          } else if constexpr (std::is_same_v<T, Type::Own>) {
+          } else if constexpr (std::is_same_v<T, Type::CRef>) {
+            return "cref<" + (v.inner ? v.inner->to_string() : "?") + ">";
+          } 
+          else if constexpr (std::is_same_v<T, Type::Own>) {
             return "own<" + (v.inner ? v.inner->to_string() : "?") + ">";
           } else if constexpr (std::is_same_v<T, Type::Func>) {
             std::string result = "(";
@@ -203,6 +212,10 @@ inline Type type_ptr(Type inner) {
 
 inline Type type_ref(Type inner) {
   return Type(Type::Ref{std::make_unique<Type>(std::move(inner))});
+}
+
+inline Type type_cref(Type inner) {
+  return Type(Type::CRef{std::make_unique<Type>(std::move(inner))});
 }
 
 inline Type type_own(Type inner) {
