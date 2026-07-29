@@ -70,6 +70,27 @@ TEST(Sema, RefToRefError) {
     )"));
 }
 
+TEST(Sema, RefToCRefError) {
+    EXPECT_FALSE(run_sema(R"(
+        fn bad(p: ref<cref<int>>) -> int { return 0; }
+        fn main() -> int { return 0; }
+    )"));
+}
+
+TEST(Sema, CRefToCRefError) {
+    EXPECT_FALSE(run_sema(R"(
+        fn bad(p: cref<cref<int>>) -> int { return 0; }
+        fn main() -> int { return 0; }
+    )"));
+}
+
+TEST(Sema, CRefToRefError) {
+    EXPECT_FALSE(run_sema(R"(
+        fn bad(p: cref<ref<int>>) -> int { return 0; }
+        fn main() -> int { return 0; }
+    )"));
+}
+
 TEST(Sema, OwnToOwnError) {
     EXPECT_FALSE(run_sema(R"(
         fn bad(p: own<own<int>>) {}
@@ -84,9 +105,23 @@ TEST(Sema, RefToOwnError) {
     )"));
 }
 
+TEST(Sema, CRefToOwnError) {
+    EXPECT_FALSE(run_sema(R"(
+        fn bad(p: cref<own<int>>) {}
+        fn main() -> int { return 0; }
+    )"));
+}
+
 TEST(Sema, OwnToRefError) {
     EXPECT_FALSE(run_sema(R"(
         fn bad(p: own<ref<int>>) {}
+        fn main() -> int { return 0; }
+    )"));
+}
+
+TEST(Sema, OwnToCRefError) {
+    EXPECT_FALSE(run_sema(R"(
+        fn bad(p: own<cref<int>>) {}
         fn main() -> int { return 0; }
     )"));
 }

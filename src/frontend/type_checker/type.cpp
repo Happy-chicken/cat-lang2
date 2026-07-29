@@ -166,7 +166,7 @@ string Type::to_string() const {
             [](const StructType::TraitObject &t) { return "dyn " + t.name; }
           }, v.get_data());
         } else {
-          return "error type";
+          return "{error}";
         }
       },
       data);
