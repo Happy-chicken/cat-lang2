@@ -22,9 +22,6 @@ namespace cat::semantics {
             [](const ast::Type::Char &) -> Type {
               return Type::prim(PrimType::Char);
             },
-            [](const ast::Type::Str &) -> Type {
-              return Type::prim(PrimType::Str);
-            },
             [](const ast::Type::Void &) -> Type {
               return Type::prim(PrimType::Void);
             },
@@ -34,8 +31,14 @@ namespace cat::semantics {
             [](const ast::Type::Ref &ref) -> Type {
               return Type::ref(ast_type_to_semantic_type(*ref.inner));
             },
+            [](const ast::Type::CRef &cref) -> Type {
+              return Type::cref(ast_type_to_semantic_type(*cref.inner));
+            },
             [](const ast::Type::Own &own) -> Type {
               return Type::own(ast_type_to_semantic_type(*own.inner));
+            },
+            [](const ast::Type::Str &str) -> Type {
+              return Type::str(str.length);
             },
             [](const ast::Type::List &list) -> Type {
               return Type::list(ast_type_to_semantic_type(*list.inner));
@@ -61,6 +64,9 @@ namespace cat::semantics {
             },
             [](const ast::Type::Class &cls) -> Type {
               return Type::class_(cls.name);
+            },
+            [](const ast::Type::TraitObject &trait) -> Type {
+              return Type::trait(trait.name);
             },
             [](const auto &) -> Type { return Type::error(); },
         },
@@ -161,8 +167,8 @@ namespace cat::semantics {
             [](bool) -> Type { return Type::prim(PrimType::Bool); },
             [](float) -> Type { return Type::prim(PrimType::Float); },
             [](char) -> Type { return Type::prim(PrimType::Char); },
-            [](const std::string &) -> Type {
-              return Type::prim(PrimType::Str);
+            [](const std::string &s) -> Type {
+              return Type::type_str(s.size());
             },
         },
         lit.lit
@@ -422,33 +428,35 @@ namespace cat::semantics {
       return Type::error();
     }
 
-    if (auto *cls = std::get_if<Type::Class>(&resolved.get_data())) {
-      auto sym = ctxt.get_symbol_table().resolve_global(cls->name);
-      if (sym) {
-        if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
-          size_t required = 0;
-          for (bool has_def: class_data->has_default)
-            if (!has_def) ++required;
-          if (arg_types.size() < required || arg_types.size() > class_data->fields.size()) {
-            diag.error(span, "Constructor argument count mismatch: expected " + std::to_string(required) + " to " + std::to_string(class_data->fields.size()) + ", got " + std::to_string(arg_types.size()))
-                .emit_to(diag);
-            return Type::error();
-          }
-          Unifier unifier(ctxt.get_type_ctxt());
-          for (size_t i = 0; i < arg_types.size(); ++i) {
-            auto expected = ast_type_to_semantic_type(class_data->fields[i].second);
-            auto result = unifier.unify(arg_types[i], expected);
-            if (std::holds_alternative<error::UnifyError>(result)) {
-              diag.error(span, "Constructor argument " + std::to_string(i + 1) + " type mismatch for field '" + class_data->fields[i].first + "'")
+    if (auto *struct_ty = std::get_if<Type::StructType>(&resolved.get_data())) {
+      if (auto * cls = std::get_if<Type::StructType::Class>(&struct_ty->get_data())) {
+       auto sym = ctxt.get_symbol_table().resolve_global(cls->name);
+        if (sym) {
+          if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
+            size_t required = 0;
+            for (bool has_def: class_data->has_default)
+              if (!has_def) ++required;
+            if (arg_types.size() < required || arg_types.size() > class_data->fields.size()) {
+              diag.error(span, "Constructor argument count mismatch: expected " + std::to_string(required) + " to " + std::to_string(class_data->fields.size()) + ", got " + std::to_string(arg_types.size()))
                   .emit_to(diag);
               return Type::error();
             }
+            Unifier unifier(ctxt.get_type_ctxt());
+            for (size_t i = 0; i < arg_types.size(); ++i) {
+              auto expected = ast_type_to_semantic_type(class_data->fields[i].second);
+              auto result = unifier.unify(arg_types[i], expected);
+              if (std::holds_alternative<error::UnifyError>(result)) {
+                diag.error(span, "Constructor argument " + std::to_string(i + 1) + " type mismatch for field '" + class_data->fields[i].first + "'")
+                    .emit_to(diag);
+                return Type::error();
+              }
+            }
+            return Type::class_(cls->name);
           }
-          return Type::class_(cls->name);
         }
       }
-      diag.error(span, "Class '" + cls->name + "' not found")
-          .emit_to(diag);
+      return Type::error();
+    } else {
       return Type::error();
     }
 
@@ -468,91 +476,97 @@ namespace cat::semantics {
         infer_expr(member.object->expr, member.object->span, ctxt, diag);
     Type resolved = ctxt.get_type_ctxt().resolve_type(obj_ty);
 
-    if (auto *list_ty = std::get_if<Type::List>(&resolved.get_data())) {
-      auto elem = list_ty->inner ? list_ty->inner->clone() : Type::error();
-
-      auto desc = ctxt.get_builtins().lookup(cat::runtime::LIST_TAG, member.field);
-      if (desc) {
-        return desc->get().build_func_type(elem);
-      }
-
-      diag.error(span, "Unknown list method '" + member.field + "'")
-          .emit_to(diag);
-      return Type::error();
-    }
-
-    if (auto *cls = std::get_if<Type::Class>(&resolved.get_data())) {
-      auto sym = ctxt.get_symbol_table().resolve_global(cls->name);
-      if (!sym) {
-        diag.error(span, "Class '" + cls->name + "' not found")
-            .emit_to(diag);
-        return Type::error();
-      }
-
-      if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
-        for (const auto &[field_name, field_ty]: class_data->fields) {
-          if (field_name == member.field) {
-            return ast_type_to_semantic_type(field_ty);
+    if (auto *struct_ty = std::get_if<Type::StructType>(&resolved.get_data())) {
+      return std::visit(overloaded{
+        [&](const Type::StructType::List &list) -> Type {
+          auto elem = list.inner ? list.inner->clone() : Type::error();
+          auto desc = ctxt.get_builtins().lookup(cat::runtime::LIST_TAG, member.field);
+          if (desc) {
+            return desc->get().build_func_type(elem);
           }
-        }
-      }
-
-      std::string mangled = cls->name + "_" + member.field;
-      auto method_sym = ctxt.get_symbol_table().resolve_global(mangled);
-      if (method_sym) {
-        if (auto *func_data = std::get_if<FunctionData>(&method_sym->get_kind())) {
-          std::vector<uptr<Type>> param_types;
-          param_types.reserve(func_data->params.size());
-          for (const auto &ast_ty: func_data->params) {
-            param_types.push_back(
-                std::make_unique<Type>(ast_type_to_semantic_type(ast_ty))
-            );
+          diag.error(span, "Unknown list method '" + member.field + "'")
+              .emit_to(diag);
+          return Type::error();
+        },
+        [&](const Type::StructType::Class &cls) -> Type {
+          auto sym = ctxt.get_symbol_table().resolve_global(cls.name);
+          if (!sym) {
+            diag.error(span, "Class '" + cls.name + "' not found")
+                .emit_to(diag);
+            return Type::error();
           }
-          Type ret_type = ast_type_to_semantic_type(func_data->return_type);
-          return Type::func(std::move(param_types), std::move(ret_type));
-        }
-      }
+          if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
+            for (const auto &[field_name, field_ty] : class_data->fields) {
+              if (field_name == member.field) {
+                  return ast_type_to_semantic_type(field_ty);
+              }
+            }
+          }
+          std::string mangled = cls.name + "_" + member.field;
+          auto method_sym = ctxt.get_symbol_table().resolve_global(mangled);
+          if (method_sym) {
+            if (auto *func_data = std::get_if<FunctionData>(&method_sym->get_kind())) {
+              std::vector<uptr<Type>> param_types;
+              param_types.reserve(func_data->params.size());
+              for (const auto &ast_ty : func_data->params) {
+                param_types.push_back(
+                    std::make_unique<Type>(ast_type_to_semantic_type(ast_ty))
+                );
+              }
+              Type ret_type = ast_type_to_semantic_type(func_data->return_type);
+              return Type::func(std::move(param_types), std::move(ret_type));
+            }
+          }
 
-      diag.error(span, "Field or method '" + member.field + "' not found in class '" + cls->name + "'")
-          .emit_to(diag);
-      return Type::error();
+          diag.error(span, "Field or method '" + member.field + "' not found in class '" + cls.name + "'")
+              .emit_to(diag);
+          return Type::error();
+        },
+        [&](const auto &) -> Type {
+          diag.error(span, "Member access requires a class or list type")
+              .note("Got: " + resolved.to_string())
+              .emit_to(diag);
+          return Type::error();
+        }
+      }, struct_ty->get_data());
     }
 
     diag.error(span, "Member access requires a class type")
         .note("Got: " + resolved.to_string())
         .emit_to(diag);
     return Type::error();
-  }
+}
 
   Type Inferer::infer_index(const IndexExpr &index, Span span, SemaCtxt &ctxt, error::DiagCtxt &diag) {
     Type obj_ty =
         infer_expr(index.object->expr, index.object->span, ctxt, diag);
     Type resolved = ctxt.get_type_ctxt().resolve_type(obj_ty);
 
-    if (auto *list = std::get_if<Type::List>(&resolved.get_data())) {
-      Type idx_ty =
-          infer_expr(index.index->expr, index.index->span, ctxt, diag);
+    if (auto *struct_ty = std::get_if<Type::StructType>(&resolved.get_data())) {
+      if (auto *list = std::get_if<Type::StructType::List>(&struct_ty->get_data())) {
+        Type idx_ty = infer_expr(index.index->expr, index.index->span, ctxt, diag);
 
-      Unifier unifier(ctxt.get_type_ctxt());
-      auto result = unifier.unify(idx_ty, Type::prim(PrimType::Int));
-      if (std::holds_alternative<error::UnifyError>(result)) {
-        diag.error(span, "Index must be an integer type")
-            .note("Got: " + idx_ty.to_string())
-            .emit_to(diag);
+        Unifier unifier(ctxt.get_type_ctxt());
+        auto result = unifier.unify(idx_ty, Type::prim(PrimType::Int));
+        if (std::holds_alternative<error::UnifyError>(result)) {
+          diag.error(span, "Index must be an integer type")
+              .note("Got: " + idx_ty.to_string())
+              .emit_to(diag);
+          return Type::error();
+        }
+
+        if (list->inner) {
+          return list->inner->clone();
+        }
         return Type::error();
       }
-
-      if (list->inner) {
-        return list->inner->clone();
-      }
-      return Type::error();
     }
 
     diag.error(span, "Indexing requires a list type")
         .note("Got: " + resolved.to_string())
         .emit_to(diag);
     return Type::error();
-  }
+}
 
   Type Inferer::infer_list_literal(const ListExpr &list, Span span, SemaCtxt &ctxt, error::DiagCtxt &diag) {
     if (list.elements.empty()) {

@@ -2,6 +2,8 @@
 #include "../ast/type.h"
 #include "type.h"
 #include "unifier.h"
+#include <optional>
+#include <variant>
 
 namespace cat::semantics {
 
@@ -18,11 +20,32 @@ static optional<ast::Type> semantic_type_to_ast_type(const Type &ty) {
               return ast::type_bool();
             case PrimType::Char:
               return ast::type_char();
-            case PrimType::Str:
-              return ast::type_str();
             case PrimType::Void:
               return ast::type_void();
             }
+            return std::nullopt;
+          },
+          [](const Type::StructType &struct_type) -> optional<ast::Type> {
+            std::visit(
+                overloaded{
+                    [&](const Type::StructType::Str &str)->optional<ast::Type> {
+                      return ast::type_str(str.length);
+                    },
+                    [&](const Type::StructType::List &list)->optional<ast::Type> {
+                      auto inner = semantic_type_to_ast_type(*list.inner);
+                      if (inner.has_value())
+                        return ast::type_list(inner->clone());
+                      return std::nullopt;
+                    },
+                    [&](const Type::StructType::Class &cls)->optional<ast::Type> {
+                      return ast::type_class(cls.name);
+                    },
+                    [&](const Type::StructType::TraitObject &trait)->optional<ast::Type> {
+                      return ast::type_trait(trait.name);
+                    },
+                    [&](const auto &) -> optional<ast::Type> { return std::nullopt; },
+                },
+                struct_type.get_data());
             return std::nullopt;
           },
           [&](const Type::Ptr &ptr) -> optional<ast::Type> {
@@ -43,15 +66,6 @@ static optional<ast::Type> semantic_type_to_ast_type(const Type &ty) {
             if (inner.has_value())
               return ast::type_own(inner->clone());
             return std::nullopt;
-          },
-          [&](const Type::List &list) -> optional<ast::Type> {
-            auto inner = semantic_type_to_ast_type(*list.inner);
-            if (inner.has_value())
-              return ast::type_list(inner->clone());
-            return std::nullopt;
-          },
-          [&](const Type::Class &cls) -> optional<ast::Type> {
-            return ast::type_class(cls.name);
           },
           [&](const Type::Func &func) -> optional<ast::Type> {
             vector<uptr<ast::Type>> param_types;

@@ -110,6 +110,7 @@ std::string type_to_string(const Type &type) {
                    }
                  },
                  [&](const Type::Class &t) { ss << t.name; },
+                 [&](const Type::TraitObject &t) { ss << t.name; },
              },
              type.data);
   return ss.str();

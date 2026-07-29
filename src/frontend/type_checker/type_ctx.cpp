@@ -28,11 +28,21 @@ Type TypeCtxt::resolve_type(const Type &ty) const {
             }
             visited.erase(tv);
             return Type::var(v.id);
-          } else if constexpr (std::is_same_v<T, Type::List>) {
-            if (v.inner) {
-              return Type::list(self(self, *v.inner));
-            }
-            return Type::list(Type::error());
+          } else if constexpr (std::is_same_v<T, Type::StructType>) {
+            return std::visit(
+              [&](const auto &inner) -> Type {
+                  using I = std::decay_t<decltype(inner)>;
+                  if constexpr (std::is_same_v<I, Type::StructType::List>) {
+                      if (inner.inner) {
+                          return Type::list(self(self, *inner.inner));
+                      }
+                      return Type::list(Type::error());
+                  } else {
+                      return Type(Type::StructType(inner));
+                  }
+              },
+              v.get_data()
+            );
           } else if constexpr (std::is_same_v<T, Type::Ptr>) {
             if (v.inner) {
               return Type::ptr(self(self, *v.inner));

@@ -1,5 +1,6 @@
 #include "type.h"
 #include <sstream>
+#include <type_traits>
 
 namespace cat::semantics {
 
@@ -11,9 +12,6 @@ Type Type::clone() const {
           return Type(Prim{v.kind});
         } else if constexpr (std::is_same_v<T, Var>) {
           return Type(Var{v.id});
-        } else if constexpr (std::is_same_v<T, List>) {
-          return Type(List{
-              std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
         } else if constexpr (std::is_same_v<T, Ptr>) {
           return Type(
               Ptr{std::make_unique<Type>(v.inner ? v.inner->clone() : Type())});
@@ -32,11 +30,28 @@ Type Type::clone() const {
           return Type(
               Func{std::move(cloned_params),
                    std::make_unique<Type>(v.ret ? v.ret->clone() : Type())});
-        } else if constexpr (std::is_same_v<T, Class>) {
-          return Type(Class{v.name});
-        } else if constexpr (std::is_same_v<T, TraitObject>) {
-          return Type(TraitObject{v.name});
-        } else { // Error
+        } else if constexpr (std::is_same_v<T, StructType>) {
+          StructType cloned = std::visit(
+              [](const auto &innner) -> StructType {
+                using InnerT = std::decay_t<decltype(innner)>;
+                if constexpr (std::is_same_v<InnerT, StructType::Class>) {
+                  return StructType(StructType::Class{innner.name});
+                } else if constexpr (std::is_same_v<InnerT, StructType::TraitObject>) {
+                  return StructType(StructType::TraitObject{innner.name});
+                } else if constexpr (std::is_same_v<InnerT, StructType::Str>) {
+                  return StructType(StructType::Str{innner.length});
+                } else if constexpr (std::is_same_v<InnerT, StructType::List>) {
+                  return StructType(StructType::List{
+                      std::make_unique<Type>(innner.inner ? innner.inner->clone() : Type())});
+                } else if constexpr (std::is_same_v<InnerT, StructType::Str>) {
+                  return StructType(StructType::Str{innner.length});
+                } else {
+                  return innner; // For other variants
+                }
+              },
+              v.get_data());
+        }
+        else { // Error
           return Type(Error{});
         }
       },
@@ -117,16 +132,12 @@ string Type::to_string() const {
             return "bool";
           case PrimType::Char:
             return "char";
-          case PrimType::Str:
-            return "str";
           case PrimType::Void:
             return "none";
           }
           return "(unknown)";
         } else if constexpr (std::is_same_v<T, Var>) {
           return "?" + std::to_string(v.id);
-        } else if constexpr (std::is_same_v<T, List>) {
-          return "list<" + (v.inner ? v.inner->to_string() : string("?")) + ">";
         } else if constexpr (std::is_same_v<T, Ptr>) {
           return "ptr<" + (v.inner ? v.inner->to_string() : string("?")) + ">";
         } else if constexpr (std::is_same_v<T, Ref>) {
@@ -143,11 +154,21 @@ string Type::to_string() const {
           }
           oss << ") -> " << (v.ret ? v.ret->to_string() : string("?"));
           return oss.str();
-        } else if constexpr (std::is_same_v<T, Class>) {
-          return v.name;
-        } else if constexpr (std::is_same_v<T, TraitObject>) {
-          return "dyn " + v.name;
-        } else { // Error
+        } else if constexpr (std::is_same_v<T, StructType>) {
+          [](const auto &inner) -> string {
+            using I = std::decay_t<decltype(inner)>;
+            if constexpr (std::is_same_v<I, StructType::Str>) {
+                return "str[" + std::to_string(inner.length) + "]";
+            } else if constexpr (std::is_same_v<I, StructType::List>) {
+                return "list<" + (inner.inner ? inner.inner->to_string() : "?") + ">";
+            } else if constexpr (std::is_same_v<I, StructType::Class>) {
+                return inner.name;
+            } else if constexpr (std::is_same_v<I, StructType::TraitObject>) {
+                return "dyn " + inner.name;
+            }
+            return "{unknown struct}";
+          }(v.get_data());
+        }  else { // Error
           return "{error}";
         }
       },

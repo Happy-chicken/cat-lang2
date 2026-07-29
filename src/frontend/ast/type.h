@@ -2,6 +2,7 @@
 
 #include "../common/common.h"
 #include <functional>
+#include <sys/types.h>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -14,7 +15,7 @@ struct Type {
   struct Float {};
   struct Bool {};
   struct Char {};
-  struct Str {};
+  struct Str { uint32_t length; };
   struct Void {};
 
   struct Ptr {
@@ -46,8 +47,12 @@ struct Type {
     string name;
   };
 
+  struct TraitObject {
+    string name;
+  };
+
   using Variant = std::variant<Int, Float, Bool, Char, Str, Void, Ptr, Ref, CRef, Own,
-                               List, Func, Class>;
+                               List, Func, Class, TraitObject>;
 
   Variant data;
 
@@ -93,7 +98,7 @@ struct Type {
               if (!a.ret || !b.ret)
                 return false;
               return *a.ret == *b.ret;
-            } else if constexpr (std::is_same_v<T, Class>) {
+            } else if constexpr (std::is_same_v<T, Class> || std::is_same_v<T, TraitObject>) {
               return a.name == b.name;
             } else {
               return true;
@@ -146,6 +151,8 @@ struct Type {
             return Type(Func{std::move(cloned_params), std::move(cloned_ret)});
           } else if constexpr (std::is_same_v<T, Class>) {
             return Type(Class{v.name});
+          } else if constexpr (std::is_same_v<T, TraitObject>) {
+            return Type(TraitObject{v.name});
           } else {
             return Type(Int{});
           }
@@ -189,7 +196,8 @@ struct Type {
             result += ") -> ";
             result += v.ret ? v.ret->to_string() : "?";
             return result;
-          } else if constexpr (std::is_same_v<T, Type::Class>) {
+          } else if constexpr (std::is_same_v<T, Type::Class> || 
+                               std::is_same_v<T, Type::TraitObject>) {
             return v.name;
           } else {
             return "unknown";
@@ -203,7 +211,8 @@ inline Type type_int() { return Type(Type::Int{}); }
 inline Type type_float() { return Type(Type::Float{}); }
 inline Type type_bool() { return Type(Type::Bool{}); }
 inline Type type_char() { return Type(Type::Char{}); }
-inline Type type_str() { return Type(Type::Str{}); }
+// TODO: parse str length from type string
+inline Type type_str(uint32_t length = 0) { return Type(Type::Str{length}); }
 inline Type type_void() { return Type(Type::Void{}); }
 
 inline Type type_ptr(Type inner) {
@@ -228,6 +237,10 @@ inline Type type_list(Type inner) {
 
 inline Type type_class(std::string name) {
   return Type(Type::Class{std::move(name)});
+}
+
+inline Type type_trait(std::string name) {
+  return Type(Type::TraitObject{std::move(name)});
 }
 
 inline Type type_func(vector<uptr<Type>> params, uptr<Type> ret) {

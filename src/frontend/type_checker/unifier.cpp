@@ -36,15 +36,6 @@ error::UnifyResult<semantics::Type> Unifier::unify(const Type &t1,
               return a.clone();
             return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
           },
-          [&](const Type::List &la,
-              const Type::List &lb) -> error::UnifyResult<semantics::Type> {
-            if (!la.inner || !lb.inner)
-              return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
-            auto inner = unify(*la.inner, *lb.inner);
-            if (std::holds_alternative<error::UnifyError>(inner))
-              return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
-            return Type::list(std::move(std::get<Type>(inner)));
-          },
           [&](const Type::Ptr &pa,
               const Type::Ptr &pb) -> error::UnifyResult<semantics::Type> {
             if (!pa.inner || !pb.inner)
@@ -92,17 +83,45 @@ error::UnifyResult<semantics::Type> Unifier::unify(const Type &t1,
             return Type::func(std::move(unified_params),
                               std::move(std::get<Type>(ret)));
           },
-          [&](const Type::Class &ca,
-              const Type::Class &cb) -> error::UnifyResult<semantics::Type> {
-            if (ca.name == cb.name)
-              return a.clone();
-            return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
-          },
-          [&](const Type::TraitObject &ta, const Type::TraitObject &tb)
-              -> error::UnifyResult<semantics::Type> {
-            if (ta.name == tb.name)
-              return a.clone();
-            return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+          [&](const Type::StructType &sa,
+              const Type::StructType &sb) -> error::UnifyResult<semantics::Type> {
+                return std::visit(overloaded{
+                  [&](const Type::StructType::Str &stra,
+                    const Type::StructType::Str &strb)
+                    -> error::UnifyResult<semantics::Type> {
+                    if (stra.length == strb.length)
+                        return a.clone();  // 或 return Type::str(stra.length);
+                    return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+                  },
+                  [&](const Type::StructType::List &la,
+                    const Type::StructType::List &lb)
+                    -> error::UnifyResult<semantics::Type> {
+                    if (!la.inner || !lb.inner)
+                        return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+                    auto inner = unify(*la.inner, *lb.inner);
+                    if (std::holds_alternative<error::UnifyError>(inner))
+                        return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+                    return Type::list(std::move(std::get<Type>(inner)));
+                  },
+                  [&](const Type::StructType::Class &ca,
+                    const Type::StructType::Class &cb)
+                    -> error::UnifyResult<semantics::Type> {
+                    if (ca.name == cb.name)
+                        return a.clone();
+                    return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+                  },
+                  [&](const Type::StructType::TraitObject &ta,
+                    const Type::StructType::TraitObject &tb)
+                    -> error::UnifyResult<semantics::Type> {
+                    if (ta.name == tb.name)
+                        return a.clone();
+                    return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+                  },
+                  [&](const auto &,
+                    const auto &) -> error::UnifyResult<semantics::Type> {
+                    return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
+                  },
+                }, sa.get_data(), sb.get_data());
           },
           [&](const auto &,
               const auto &) -> error::UnifyResult<semantics::Type> {
@@ -130,9 +149,6 @@ bool Unifier::occurs_check(TypedVar var, const Type &ty) {
   auto resolved = type_ctxt.resolve_type(ty);
   return std::visit(overloaded{
                         [&](const Type::Var &v) { return v.id == var; },
-                        [&](const Type::List &l) {
-                          return l.inner && occurs_check(var, *l.inner);
-                        },
                         [&](const Type::Ptr &p) {
                           return p.inner && occurs_check(var, *p.inner);
                         },
@@ -148,6 +164,14 @@ bool Unifier::occurs_check(TypedVar var, const Type &ty) {
                               return true;
                           }
                           return f.ret && occurs_check(var, *f.ret);
+                        },
+                        [&](const Type::StructType &s) {
+                          return std::visit(overloaded{
+                            [&](const Type::StructType::List &l) {
+                              return l.inner && occurs_check(var, *l.inner);
+                            },
+                            [&](const auto &) { return false; }
+                          }, s.get_data());
                         },
                         [&](const auto &) { return false; },
                     },
