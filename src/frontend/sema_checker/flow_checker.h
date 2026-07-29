@@ -1,8 +1,8 @@
 #pragma once
+#include "diag.h"
+#include "item.h"
 #include "pass_interface.h"
-#include "sema_checker.h"
 #include "stmt.h"
-#include "type.h"
 namespace cat {
 enum class Terminator { Returns, Diverges, FallsThrough };
 
@@ -12,7 +12,6 @@ class FlowChecker : public semantics::Pass {
 
   bool run(Program &program, semantics::SemaCtxt &ctx,
            error::DiagCtxt &diag) override {
-    sym_table = &ctx.get_symbol_table();
     for (const auto &item_node : program.items) {
       std::visit(
           overloaded{[&](const FunctionDef &func) {
@@ -45,9 +44,5 @@ private:
   Terminator analyze_block(const Block &block, error::DiagCtxt &diag);
   Terminator analyze_stmt(const StmtNode &stmt, error::DiagCtxt &diag);
   Terminator analyze_if_stmt(const IfStmt &if_stmt, error::DiagCtxt &diag);
-  void check_expr(const ExprNode &expr, error::DiagCtxt &diag);
-
-  SymbolTable *sym_table = nullptr;
-  unordered_set<string> moved;
 };
 } // namespace cat

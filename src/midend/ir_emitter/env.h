@@ -14,12 +14,11 @@ struct Env {
   explicit Env(sptr<Env> p) : parent(std::move(p)) {}
 
   void declare_var(const string &name, llvm::Value *ptr, llvm::Type *alloca_ty,
-                   llvm::Type *value_ty, bool is_ref = false,
-                   vector<llvm::Type *> deref_chain = {}, bool is_own = false,
+                   llvm::Type *value_ty, BorrowKind borrow_kind = BorrowKind::None,
+                   vector<llvm::Type *> deref_chain = {},
                    llvm::FunctionType *func_ty = nullptr) {
-    locals[name] = VarInfo{ptr,    alloca_ty, value_ty,
-                           is_ref, is_own,    std::move(deref_chain),
-                           func_ty};
+    locals[name] = VarInfo{ptr, alloca_ty, value_ty, borrow_kind,
+                           std::move(deref_chain), func_ty};
   }
 
   VarInfo lookup_var(const string &name) const {

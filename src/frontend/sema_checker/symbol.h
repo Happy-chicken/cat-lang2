@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/borrow_kind.h"
 #include "common/common.h"
 #include "common/span.h"
 #include "frontend/ast/type.h"
@@ -8,13 +9,10 @@
 namespace cat {
 
 // ---------- SymbolKind 各个变体 ----------
-namespace sym {
-  enum class BorrrowKind {isRef, isCRef, isOwn, None};
-}
 struct VariableData {
   bool is_mutable;
   bool is_initialized;
-  sym::BorrrowKind borr_kind;
+  BorrowKind borr_kind = BorrowKind::None;
   optional<size_t> known_list_len;
 };
 
@@ -26,7 +24,7 @@ struct FunctionData {
 struct TypeData {}; // 仅标记类型
 
 struct ParameterData {
-  sym::BorrrowKind borr_kind;
+  BorrowKind borr_kind = BorrowKind::None;
 };
 
 struct ClassData {
@@ -52,13 +50,13 @@ public:
   Symbol &operator=(Symbol &&) = default;
 
   static Symbol new_variable(string name, optional<ast::Type> ty,
-                             bool is_mutable, Span span, sym::BorrrowKind borr_kind,
+                             bool is_mutable, Span span, BorrowKind borr_kind = BorrowKind::None,
                              optional<size_t> list_len = std::nullopt);
 
   static Symbol new_function(string name, vector<ast::Type> params,
                              ast::Type return_type, Span span);
 
-  static Symbol new_parameter(string name, ast::Type ty, sym::BorrrowKind borr_kind,
+  static Symbol new_parameter(string name, ast::Type ty, BorrowKind borr_kind,
                               Span span);
 
   static Symbol new_type(string name, Span span);
@@ -85,30 +83,30 @@ public:
 
   bool is_ref() const {
     if (auto *param = std::get_if<ParameterData>(&kind)) {
-      return param->borr_kind == sym::BorrrowKind::isRef;
+      return param->borr_kind == BorrowKind::Ref;
     }
     if (auto *var = std::get_if<VariableData>(&kind)) {
-      return var->borr_kind == sym::BorrrowKind::isRef;
+      return var->borr_kind == BorrowKind::Ref;
     }
     return false;
   }
 
   bool is_cref() const {
     if (auto *param = std::get_if<ParameterData>(&kind)) {
-      return param->borr_kind == sym::BorrrowKind::isCRef;
+      return param->borr_kind == BorrowKind::CRef;
     }
     if (auto *var = std::get_if<VariableData>(&kind)) {
-      return var->borr_kind == sym::BorrrowKind::isCRef;
+      return var->borr_kind == BorrowKind::CRef;
     }
     return false;
   }
 
   bool is_own() const {
     if (auto *param = std::get_if<ParameterData>(&kind)) {
-      return param->borr_kind == sym::BorrrowKind::isOwn;
+      return param->borr_kind == BorrowKind::Own;
     }
     if (auto *var = std::get_if<VariableData>(&kind)) {
-      return var->borr_kind == sym::BorrrowKind::isOwn;
+      return var->borr_kind == BorrowKind::Own;
     }
     return false;
   }

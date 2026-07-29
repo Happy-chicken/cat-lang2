@@ -104,12 +104,12 @@ void TypeChecker::check_function(const FunctionDef &func, Span span,
   ctx.get_symbol_table().enter_scope(ScopeKind::Function);
 
   for (const auto &param : func.function_header.params) {
-    sym::BorrrowKind kind = std::visit(
+    BorrowKind kind = std::visit(
       overloaded{
-          [](const ast::Type::Ref&)  { return sym::BorrrowKind::isRef; },
-          [](const ast::Type::CRef&) { return sym::BorrrowKind::isCRef; },
-          [](const ast::Type::Own&)  { return sym::BorrrowKind::isOwn; },
-          [](const auto&)            { return sym::BorrrowKind::None; }
+          [](const ast::Type::Ref&)  { return BorrowKind::Ref; },
+          [](const ast::Type::CRef&) { return BorrowKind::CRef; },
+          [](const ast::Type::Own&)  { return BorrowKind::Own; },
+          [](const auto&)            { return BorrowKind::None; }
       },
       param.ty.data
     );
@@ -162,12 +162,12 @@ void TypeChecker::check_stmt(const StmtNode &stmt_node, Span span,
                   .emit_to(diag);
               return;
             }
-            sym::BorrrowKind kind = std::visit(
+            BorrowKind kind = std::visit(
               overloaded{
-                  [](const ast::Type::Ref&)  { return sym::BorrrowKind::isRef; },
-                  [](const ast::Type::CRef&) { return sym::BorrrowKind::isCRef; },
-                  [](const ast::Type::Own&)  { return sym::BorrrowKind::isOwn; },
-                  [](const auto&)            { return sym::BorrrowKind::None; }
+                  [](const ast::Type::Ref&)  { return BorrowKind::Ref; },
+                  [](const ast::Type::CRef&) { return BorrowKind::CRef; },
+                  [](const ast::Type::Own&)  { return BorrowKind::Own; },
+                  [](const auto&)            { return BorrowKind::None; }
               },
               stored_type->data
             );

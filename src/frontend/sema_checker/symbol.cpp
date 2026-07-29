@@ -8,7 +8,7 @@ Symbol::Symbol(SymbolKind kind, string name, optional<ast::Type> ty,
       scope_depth(scope_depth), span_(span) {}
 
 Symbol Symbol::new_variable(string name, optional<ast::Type> ty,
-                            bool is_mutable, Span span, sym::BorrrowKind borr_kind,
+                            bool is_mutable, Span span, BorrowKind borr_kind,
                             optional<size_t> list_len) {
   VariableData data{is_mutable, false, borr_kind, std::move(list_len)};
   SymbolKind kind = std::move(data);
@@ -22,7 +22,7 @@ Symbol Symbol::new_function(string name, vector<ast::Type> params,
   return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
 }
 
-Symbol Symbol::new_parameter(string name, ast::Type ty, sym::BorrrowKind borr_kind,
+Symbol Symbol::new_parameter(string name, ast::Type ty, BorrowKind borr_kind,
                              Span span) {
   ParameterData data{borr_kind};
   SymbolKind kind = std::move(data);

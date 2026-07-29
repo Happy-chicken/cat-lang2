@@ -130,34 +130,56 @@ namespace cat::semantics {
     if (!declared_type.has_value()) {
       return inferred_type;
     }
-    auto unifier = Unifier(ctxt.get_type_ctxt());
-    auto unify_result = unifier.unify(inferred_type, *declared_type);
 
-    return std::visit(
+    Type expected = declared_type->clone();
+    Type *inner_expected = &expected;
+
+    // For ref/cref/own bindings, unify init against the inner type
+    if (auto *ref = std::get_if<Type::Ref>(&expected.get_data()))
+      inner_expected = ref->inner.get();
+    else if (auto *cref = std::get_if<Type::CRef>(&expected.get_data()))
+      inner_expected = cref->inner.get();
+    else if (auto *own = std::get_if<Type::Own>(&expected.get_data()))
+      inner_expected = own->inner.get();
+
+    if (!inner_expected) {
+      diag.error(span, "Invalid inner type for reference/ownership binding")
+          .emit_to(diag);
+      return Type::error();
+    }
+
+    auto unifier = Unifier(ctxt.get_type_ctxt());
+    auto unify_result = unifier.unify(inferred_type, *inner_expected);
+
+    auto ok = std::visit(
         overloaded{
-            [&](const Type &ok_type) -> Type { return ok_type.clone(); },
-            [&](const error::UnifyError &err) -> Type {
+            [&](const Type &ok_type) -> bool { return true; },
+            [&](const error::UnifyError &err) -> bool {
               std::visit(
                   overloaded{
                       [&](const error::Mismatch &mismatch) {
                         diag.error(span, "Type mismatch in let binding")
-                            .note("Expected: " + mismatch.expected.to_string())
+                            .note("Expected: " +
+                                  mismatch.expected.to_string())
                             .note("Found: " + mismatch.found.to_string())
                             .emit_to(diag);
                       },
                       [&](const error::InfiniteType &infinite) {
                         diag.error(span, "Infinite type in let binding")
-                            .note("Type variable " + std::to_string(infinite.var) + " appears in its own definition")
+                            .note("Type variable " +
+                                  std::to_string(infinite.var) +
+                                  " appears in its own definition")
                             .emit_to(diag);
                       },
                   },
-                  err
-              );
-              return Type::error();
+                  err);
+              return false;
             },
         },
-        unify_result
-    );
+        unify_result);
+    if (!ok)
+      return Type::error();
+    return expected;
   }
 
   Type Inferer::infer_literal(const LiteralExpr &lit) {
@@ -497,6 +519,12 @@ namespace cat::semantics {
       return std::visit(overloaded{
         [&](const Type::StructType::List &list) -> Type {
           auto elem = list.inner ? list.inner->clone() : Type::error();
+          if (member.field == "clone") {
+            std::vector<uptr<Type>> params;
+            params.push_back(
+                std::make_unique<Type>(Type::list(elem.clone())));
+            return Type::func(std::move(params), Type::list(elem.clone()));
+          }
           auto desc = ctxt.get_builtins().lookup(cat::runtime::LIST_TAG, member.field);
           if (desc) {
             return desc->get().build_func_type(elem);
@@ -511,6 +539,12 @@ namespace cat::semantics {
             diag.error(span, "Class '" + cls.name + "' not found")
                 .emit_to(diag);
             return Type::error();
+          }
+          if (member.field == "clone") {
+            std::vector<uptr<Type>> params;
+            params.push_back(
+                std::make_unique<Type>(Type::class_(cls.name)));
+            return Type::func(std::move(params), Type::class_(cls.name));
           }
           if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
             for (const auto &[field_name, field_ty] : class_data->fields) {
@@ -536,6 +570,16 @@ namespace cat::semantics {
           }
 
           diag.error(span, "Field or method '" + member.field + "' not found in class '" + cls.name + "'")
+              .emit_to(diag);
+          return Type::error();
+        },
+        [&](const Type::StructType::Str &) -> Type {
+          if (member.field == "clone") {
+            std::vector<uptr<Type>> params;
+            params.push_back(std::make_unique<Type>(Type::str()));
+            return Type::func(std::move(params), Type::str());
+          }
+          diag.error(span, "Unknown str method '" + member.field + "'")
               .emit_to(diag);
           return Type::error();
         },

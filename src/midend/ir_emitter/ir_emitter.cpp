@@ -86,6 +86,8 @@ llvm::Type *IrEmitter::llvm_type(const ast::Type &ast_type) {
           return ptr_ty(c);
         if constexpr (std::is_same_v<T, ast::Type::Ref>)
           return ptr_ty(c);
+        if constexpr (std::is_same_v<T, ast::Type::CRef>)
+          return ptr_ty(c);
         if constexpr (std::is_same_v<T, ast::Type::List>) {
           if (!v.inner)
             return ptr_ty(c);
@@ -144,6 +146,11 @@ vector<llvm::Type *> IrEmitter::ptr_deref_chain(const ast::Type &ast_type) {
       if (!cur)
         break;
       chain.push_back(llvm_type(*cur));
+    } else if (auto *cref = std::get_if<ast::Type::CRef>(&cur->data)) {
+      cur = cref->inner.get();
+      if (!cur)
+        break;
+      chain.push_back(llvm_type(*cur));
     } else if (auto *own = std::get_if<ast::Type::Own>(&cur->data)) {
       cur = own->inner.get();
       if (!cur)
@@ -162,11 +169,15 @@ IrEmitter::resolve_param_type(const ast::Type &ty) {
   ParamTypeInfo info{};
 
   if (auto *ref = std::get_if<ast::Type::Ref>(&ty.data)) {
-    info.is_ref = true;
+    info.borrow_kind = BorrowKind::Ref;
     info.param_ty = ptr_ty(c);
     info.value_ty = ref->inner ? llvm_type(*ref->inner) : ptr_ty(c);
+  } else if (auto *cref = std::get_if<ast::Type::CRef>(&ty.data)) {
+    info.borrow_kind = BorrowKind::CRef;
+    info.param_ty = ptr_ty(c);
+    info.value_ty = cref->inner ? llvm_type(*cref->inner) : ptr_ty(c);
   } else if (auto *own = std::get_if<ast::Type::Own>(&ty.data)) {
-    info.is_own = true;
+    info.borrow_kind = BorrowKind::Own;
     info.param_ty = own->inner ? llvm_type(*own->inner) : llvm_type(ty);
     info.value_ty = own->inner ? llvm_type(*own->inner) : llvm_type(ty);
   } else {
@@ -187,7 +198,7 @@ llvm::Value *IrEmitter::load_variable(const string &name, Span) {
     return nullptr;
   }
   auto *val = ctx->builder->CreateLoad(v.alloca_ty, v.ptr, name);
-  if (v.is_ref)
+  if (v.borrow_kind == BorrowKind::Ref || v.borrow_kind == BorrowKind::CRef)
     val = ctx->builder->CreateLoad(v.value_ty, val);
   return val;
 }
@@ -196,7 +207,7 @@ llvm::Value *IrEmitter::variable_ptr(const string &name, Span) {
   auto vi = env->lookup_var(name);
   if (!vi.ptr)
     return nullptr;
-  if (vi.is_ref)
+  if (vi.borrow_kind == BorrowKind::Ref || vi.borrow_kind == BorrowKind::CRef)
     return ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
   return vi.ptr;
 }
@@ -322,9 +333,13 @@ void IrEmitter::build_classes(const Program &program) {
 }
 
 void IrEmitter::build_class_constructors() {
-  for (auto &kv : ctx->class_registry)
-    compile_class_constructor(kv.first().str(), kv.second->struct_ty,
-                              *kv.second);
+  for (auto &kv : ctx->class_registry) {
+    string name = kv.first().str();
+    compile_class_constructor(name, kv.second->struct_ty, *kv.second);
+    compile_class_clone(name, kv.second->struct_ty, *kv.second);
+    if (!kv.second->methods.count("clone"))
+      kv.second->methods["clone"] = name + "_clone";
+  }
 }
 
 void IrEmitter::compile_class_constructor(const string &name,
@@ -356,6 +371,81 @@ void IrEmitter::compile_class_constructor(const string &name,
     ctx->builder->CreateStore(fn->getArg(static_cast<unsigned>(i)), fp);
   }
   ctx->builder->CreateRet(instance);
+}
+
+void IrEmitter::compile_class_clone(const string &name, llvm::StructType *st,
+                                    const ClassInfo &info) {
+  auto fn_name = name + "_clone";
+  if (ctx->module->getFunction(fn_name))
+    return;
+
+  auto &c = *ctx->llvm_ctx;
+  auto *ft = llvm::FunctionType::get(ptr_ty(c), {ptr_ty(c)}, false);
+  auto *fn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
+                                    fn_name, ctx->module.get());
+  fn->getArg(0)->setName("self");
+
+  ctx->builder->SetInsertPoint(llvm::BasicBlock::Create(c, "entry", fn));
+  auto *self = fn->getArg(0);
+
+  auto *malloc_fn = declare_runtime_func("malloc", ptr_ty(c), {i64(c)});
+  auto *sz = llvm::ConstantExpr::getTruncOrBitCast(
+      llvm::ConstantExpr::getSizeOf(st), i64(c));
+  auto *new_obj = ctx->builder->CreateCall(malloc_fn, {sz}, "clone");
+
+  auto field_tys = st->elements();
+  for (size_t i = 0; i < info.field_types.size() && i < field_tys.size(); ++i) {
+    auto idx = static_cast<unsigned>(i);
+    auto *src_fp = ctx->builder->CreateStructGEP(st, self, idx);
+
+    if (std::get_if<ast::Type::List>(&info.field_types[i].data)) {
+      const auto &lt = info.field_types[i];
+      auto et = std::get<ast::Type::List>(lt.data).inner
+                    ? llvm_type(*std::get<ast::Type::List>(lt.data).inner)
+                    : i32(c);
+      auto *lst = lookup_or_create_list_type(et)->struct_ty;
+
+      auto *len_val = ctx->builder->CreateLoad(i64(c),
+                                               ctx->builder->CreateStructGEP(lst, src_fp, 0));
+      auto *old_data = ctx->builder->CreateLoad(ptr_ty(c),
+                                                ctx->builder->CreateStructGEP(lst, src_fp, 2));
+
+      auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
+          llvm::ConstantExpr::getSizeOf(et), i64(c));
+      auto *total = ctx->builder->CreateMul(len_val, elem_sz);
+      auto *new_data = ctx->builder->CreateCall(malloc_fn, {total}, "listclone");
+      auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c),
+                                             {ptr_ty(c), ptr_ty(c), i64(c)});
+      ctx->builder->CreateCall(memcpy_fn, {new_data, old_data, total});
+
+      auto *dest_fp = ctx->builder->CreateStructGEP(st, new_obj, idx);
+      ctx->builder->CreateStore(len_val,
+                                ctx->builder->CreateStructGEP(lst, dest_fp, 0));
+      ctx->builder->CreateStore(len_val,
+                                ctx->builder->CreateStructGEP(lst, dest_fp, 1));
+      ctx->builder->CreateStore(new_data,
+                                ctx->builder->CreateStructGEP(lst, dest_fp, 2));
+    } else if (std::get_if<ast::Type::Class>(&info.field_types[i].data)) {
+      auto &cls_name = std::get<ast::Type::Class>(info.field_types[i].data).name;
+      auto clone_fn_name = cls_name + "_clone";
+      auto *clone_fn = ctx->module->getFunction(clone_fn_name);
+      if (!clone_fn)
+        clone_fn = llvm::Function::Create(
+            llvm::FunctionType::get(ptr_ty(c), {ptr_ty(c)}, false),
+            llvm::Function::ExternalLinkage, clone_fn_name, ctx->module.get());
+      auto *src_cls =
+          ctx->builder->CreateLoad(field_tys[i], src_fp);
+      auto *cloned_cls = ctx->builder->CreateCall(clone_fn, {src_cls});
+      auto *dest_fp = ctx->builder->CreateStructGEP(st, new_obj, idx);
+      ctx->builder->CreateStore(cloned_cls, dest_fp);
+    } else {
+      auto *val = ctx->builder->CreateLoad(field_tys[i], src_fp);
+      auto *dest_fp = ctx->builder->CreateStructGEP(st, new_obj, idx);
+      ctx->builder->CreateStore(val, dest_fp);
+    }
+  }
+
+  ctx->builder->CreateRet(new_obj);
 }
 
 // ── global variables ──
@@ -393,7 +483,7 @@ void IrEmitter::compile_global_var(const GlobalVar &gv, Span span) {
   auto *gv_ptr = new llvm::GlobalVariable(
       *ctx->module, var_ty, gv.ty.has_value(),
       llvm::GlobalValue::ExternalLinkage, cinit, gv.name);
-  env->declare_var(gv.name, gv_ptr, var_ty, var_ty, false, {}, false,
+  env->declare_var(gv.name, gv_ptr, var_ty, var_ty, BorrowKind::None, {},
                    gv.ty ? llvm_func_type(*gv.ty) : nullptr);
 }
 
@@ -435,11 +525,12 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
     ctx->builder->CreateStore(&arg, a);
 
     auto info = resolve_param_type(p.ty);
-    env->declare_var(p.name, a, info.param_ty, info.value_ty, info.is_ref,
-                     ptr_deref_chain(p.ty), info.is_own,
+    env->declare_var(p.name, a, info.param_ty, info.value_ty, info.borrow_kind,
+                     ptr_deref_chain(p.ty),
                      llvm_func_type(p.ty));
 
-    if (!info.is_ref) {
+    if (info.borrow_kind == BorrowKind::None ||
+        info.borrow_kind == BorrowKind::Own) {
       auto kind = CleanupManager::classify_type(p.ty);
       if (kind == CleanupKind::ClassFree)
         cleanup_mgr.register_class_cleanup(*env, a, info.param_ty);
@@ -452,7 +543,7 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
       }
     }
 
-    if (!info.is_ref && !info.is_own &&
+    if (info.borrow_kind == BorrowKind::None &&
         std::get_if<ast::Type::List>(&p.ty.data)) {
       auto &list_t = std::get<ast::Type::List>(p.ty.data);
       auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
@@ -470,6 +561,18 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
       b.CreateCall(memcpy_fn, {new_data, old_data, total});
       b.CreateStore(new_data, b.CreateStructGEP(st, a, 2u));
       cleanup_mgr.register_list_cleanup(*env, a, info.param_ty, st);
+    }
+
+    if (info.borrow_kind == BorrowKind::None &&
+        std::get_if<ast::Type::Class>(&p.ty.data)) {
+      auto &cls = std::get<ast::Type::Class>(p.ty.data);
+      auto clone_fn_name = cls.name + "_clone";
+      auto *clone_fn = ctx->module->getFunction(clone_fn_name);
+      if (clone_fn) {
+        auto *old_ptr = ctx->builder->CreateLoad(info.param_ty, a);
+        auto *new_ptr = ctx->builder->CreateCall(clone_fn, {old_ptr});
+        ctx->builder->CreateStore(new_ptr, a);
+      }
     }
 
     ++i;
@@ -522,7 +625,8 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
         *ctx->module, p_ty, false, llvm::GlobalValue::InternalLinkage,
         llvm::ConstantPointerNull::get(p_ty), name + "_cap_" + cap_name);
     ctx->builder->restoreIP(saved_insert);
-    if (vi.is_ref) {
+    if (vi.borrow_kind == BorrowKind::Ref ||
+        vi.borrow_kind == BorrowKind::CRef) {
       auto *ref_ptr = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
       ctx->builder->CreateStore(ref_ptr, gv);
     } else {
@@ -550,8 +654,8 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
     ctx->builder->CreateStore(&arg, a);
 
     auto info = resolve_param_type(p.ty);
-    env->declare_var(p.name, a, info.param_ty, info.value_ty, info.is_ref,
-                     ptr_deref_chain(p.ty), info.is_own,
+    env->declare_var(p.name, a, info.param_ty, info.value_ty, info.borrow_kind,
+                     ptr_deref_chain(p.ty),
                      llvm_func_type(p.ty));
     ++i;
   }
@@ -560,8 +664,8 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
     auto vi = env->lookup_var(cap_name);
     auto *ptr = ctx->builder->CreateLoad(llvm::PointerType::get(c, 0), gv,
                                          cap_name + "_ptr");
-    env->declare_var(cap_name, ptr, vi.alloca_ty, vi.value_ty, vi.is_ref, {},
-                     vi.is_own, vi.func_ty);
+    env->declare_var(cap_name, ptr, vi.alloca_ty, vi.value_ty, vi.borrow_kind,
+                     {}, vi.func_ty);
   }
 
   if (lambda.body)
@@ -718,7 +822,37 @@ void IrEmitter::compile_stmt(const StmtNode &sn) {
 void IrEmitter::compile_var_def(const VarDefStmt &s) {
   auto &c = *ctx->llvm_ctx;
 
-  llvm::Value *init_val = s.init ? compile_expr(*s.init) : nullptr;
+  BorrowKind kind = BorrowKind::None;
+  if (s.ty) {
+    if (std::get_if<ast::Type::Ref>(&s.ty->data))
+      kind = BorrowKind::Ref;
+    else if (std::get_if<ast::Type::CRef>(&s.ty->data))
+      kind = BorrowKind::CRef;
+    else if (std::get_if<ast::Type::Own>(&s.ty->data))
+      kind = BorrowKind::Own;
+  }
+
+  llvm::Value *init_val = nullptr;
+  if (s.init) {
+    if (kind == BorrowKind::Ref || kind == BorrowKind::CRef) {
+      if (auto *var = std::get_if<Variable>(&s.init->expr)) {
+        auto vi = env->lookup_var(var->name);
+        if (vi.ptr) {
+          if (vi.borrow_kind == BorrowKind::Ref ||
+              vi.borrow_kind == BorrowKind::CRef)
+            init_val = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
+          else
+            init_val = vi.ptr;
+        }
+      }
+      if (!init_val) {
+        init_val = compile_expr(*s.init);
+      }
+    } else {
+      init_val = compile_expr(*s.init);
+    }
+  }
+
   llvm::Type *alloca_ty =
       init_val   ? init_val->getType()
       : s.ty     ? llvm_type(*s.ty)
@@ -729,9 +863,6 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
   auto *a = ctx->builder->CreateAlloca(alloca_ty, nullptr, s.name);
   ctx->builder->CreateStore(
       init_val ? init_val : llvm::Constant::getNullValue(alloca_ty), a);
-
-  bool is_ref = s.ty && std::get_if<ast::Type::Ref>(&s.ty->data);
-  bool is_own = s.ty && std::get_if<ast::Type::Own>(&s.ty->data);
 
   llvm::FunctionType *func_ty = nullptr;
   if (s.ty) {
@@ -744,15 +875,25 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
         func_ty = llvm_func_type(*sym->get_type());
   }
 
-  env->declare_var(s.name, a, alloca_ty, alloca_ty, is_ref,
+  llvm::Type *val_ty = alloca_ty;
+  if (kind == BorrowKind::Ref && s.ty) {
+    auto &ref = std::get<ast::Type::Ref>(s.ty->data);
+    val_ty = ref.inner ? llvm_type(*ref.inner) : alloca_ty;
+  }
+  if (kind == BorrowKind::CRef && s.ty) {
+    auto &cref = std::get<ast::Type::CRef>(s.ty->data);
+    val_ty = cref.inner ? llvm_type(*cref.inner) : alloca_ty;
+  }
+
+  env->declare_var(s.name, a, alloca_ty, val_ty, kind,
                    s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{},
-                   is_own, func_ty);
+                   func_ty);
 
   bool registered_cleanup = false;
 
-  if (s.ty && !is_ref) {
-    auto kind = CleanupManager::classify_type(*s.ty);
-    switch (kind) {
+  if (s.ty && kind != BorrowKind::Ref && kind != BorrowKind::CRef) {
+    auto ckind = CleanupManager::classify_type(*s.ty);
+    switch (ckind) {
     case CleanupKind::ClassFree:
       cleanup_mgr.register_class_cleanup(*env, a, alloca_ty);
       registered_cleanup = true;
@@ -777,18 +918,20 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
     }
   } else if (!s.ty && init_val && init_val->getType()->isPointerTy() &&
              !llvm::isa<llvm::Function>(init_val) &&
-             !llvm::isa<llvm::Constant>(init_val)) { // global str like format, we don't want to free it
+             !llvm::isa<llvm::Constant>(init_val)) {
     cleanup_mgr.register_class_cleanup(*env, a, alloca_ty);
     registered_cleanup = true;
   }
 
-  if (is_own) {
+  if (kind == BorrowKind::Own) {
     if (s.init)
       invalidate_source(*s.init);
   } else if (registered_cleanup && s.init && !s.ty) {
     if (auto *var = std::get_if<Variable>(&s.init->expr)) {
       auto vi = env->lookup_var(var->name);
-      if (vi.ptr && !vi.is_ref)
+      if (vi.ptr &&
+          vi.borrow_kind != BorrowKind::Ref &&
+          vi.borrow_kind != BorrowKind::CRef)
         invalidate_source(*s.init);
     }
   }
@@ -1170,8 +1313,11 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
     }
   }
   auto *fn = ctx->module->getFunction(mangled);
-  if (!fn)
+  if (!fn) {
+    if (callee.field == "clone" && self->getType()->isPointerTy())
+      return self;
     return nullptr;
+  }
 
   auto args = compile_args(fn, call.args, 1);
   args.insert(args.begin(), self);
@@ -1246,18 +1392,25 @@ llvm::Value *IrEmitter::compile_assignment(const AssignExpr &a) {
             auto vi = env->lookup_var(t.name);
             if (!vi.ptr)
               return;
+            if (vi.borrow_kind == BorrowKind::CRef) {
+              diag.error(a.target->span,
+                         "Cannot assign to variable '" + t.name +
+                             "' of const reference type")
+                  .emit_to(diag);
+              return;
+            }
             bool self_assign =
                 std::holds_alternative<Variable>(a.value->expr) &&
                 std::get<Variable>(a.value->expr).name == t.name;
-            if (!vi.is_ref && !self_assign)
+            if (vi.borrow_kind != BorrowKind::Ref && !self_assign)
               cleanup_mgr.emit_var_free(*env, vi.ptr);
-            if (vi.is_ref) {
+            if (vi.borrow_kind == BorrowKind::Ref) {
               auto *dst = ctx->builder->CreateLoad(vi.alloca_ty, vi.ptr);
               ctx->builder->CreateStore(val, dst);
             } else {
               ctx->builder->CreateStore(val, vi.ptr);
             }
-            if (!vi.is_ref && !self_assign) {
+            if (vi.borrow_kind != BorrowKind::Ref && !self_assign) {
               if (auto *st = llvm::dyn_cast<llvm::StructType>(val->getType());
                   st && lookup_list_type_by_struct(st))
                 cleanup_mgr.register_list_cleanup(*env, vi.ptr, vi.alloca_ty,
@@ -1266,7 +1419,7 @@ llvm::Value *IrEmitter::compile_assignment(const AssignExpr &a) {
                        !llvm::isa<llvm::Function>(val))
                 cleanup_mgr.register_class_cleanup(*env, vi.ptr, vi.alloca_ty);
             }
-            if (vi.is_own)
+            if (vi.borrow_kind == BorrowKind::Own)
               invalidate_source(*a.value);
           },
           [&](const MemberExpr &) {

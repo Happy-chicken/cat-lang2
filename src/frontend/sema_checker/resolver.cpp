@@ -240,7 +240,7 @@ void Resolver::declare_global_var(const GlobalVar &gv, Span span,
                                   error::DiagCtxt &diag) {
   optional<ast::Type> ty =
       gv.ty ? optional<ast::Type>(gv.ty->clone()) : std::nullopt;
-  Symbol sym = Symbol::new_variable(gv.name, std::move(ty), false, span, sym::BorrrowKind::None);
+  Symbol sym = Symbol::new_variable(gv.name, std::move(ty), false, span, BorrowKind::None);
   declare_top_level(std::move(sym), ctx, diag);
 }
 

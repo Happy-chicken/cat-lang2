@@ -34,6 +34,8 @@ public:
   void compile_class_constructor(const string &name,
                                  llvm::StructType *struct_ty,
                                  const ClassInfo &cls_info);
+  void compile_class_clone(const string &name, llvm::StructType *struct_ty,
+                           const ClassInfo &cls_info);
   void compile_global_var(const GlobalVar &gv, Span span);
   void compile_method(const string &cls_name, const FunctionDef &func,
                       Span span);
@@ -117,8 +119,7 @@ private:
   struct ParamTypeInfo {
     llvm::Type *param_ty = nullptr;
     llvm::Type *value_ty = nullptr;
-    bool is_ref = false;
-    bool is_own = false;
+    BorrowKind borrow_kind = BorrowKind::None;
   };
   ParamTypeInfo resolve_param_type(const ast::Type &ty);
 

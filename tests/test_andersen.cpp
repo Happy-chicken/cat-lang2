@@ -4,6 +4,7 @@
 #include "diag.h"
 #include "file.h"
 #include "flow_checker.h"
+#include "borrow_checker.h"
 #include "frontend/sema_checker/pass_manager.h"
 #include "frontend/type_checker/type_checker.h"
 #include "ir_emitter.h"
@@ -30,6 +31,7 @@ struct AndersenFixture : ::testing::Test {
     sema_pm.add_pass(std::make_unique<Resolver>());
     sema_pm.add_pass(std::make_unique<SemaChecker>());
     sema_pm.add_pass(std::make_unique<FlowChecker>());
+    sema_pm.add_pass(std::make_unique<BorrowChecker>());
     sema_pm.add_pass(std::make_unique<semantics::TypeChecker>());
     sema_pm.run(program, diag);
 

@@ -11,14 +11,15 @@
 #include <llvm-20/llvm/IR/Module.h>
 #include <llvm-20/llvm/IR/Type.h>
 #include <llvm-20/llvm/IR/Value.h>
+#include "common/borrow_kind.h"
+
 namespace cat::ir {
 
 struct VarInfo {
   llvm::Value *ptr;
   llvm::Type *alloca_ty;
   llvm::Type *value_ty;
-  bool is_ref = false;
-  bool is_own = false;
+  BorrowKind borrow_kind = BorrowKind::None;
   vector<llvm::Type *> deref_chain;
   llvm::FunctionType *func_ty = nullptr;
 };

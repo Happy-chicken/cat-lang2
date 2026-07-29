@@ -4,6 +4,7 @@
 #include "aot.h"
 #include "block_simplifier.h"
 #include "boolean_simplifier.h"
+#include "borrow_checker.h"
 #include "canonicalization.h"
 #include "cat_coptimizer.h"
 #include "constant_folder.h"
@@ -91,6 +92,7 @@ static bool compile_pipeline(const std::string &source,
   sema_pm.add_pass(std::make_unique<cat::Resolver>());
   sema_pm.add_pass(std::make_unique<cat::SemaChecker>());
   sema_pm.add_pass(std::make_unique<cat::FlowChecker>());
+  sema_pm.add_pass(std::make_unique<cat::BorrowChecker>());
   sema_pm.add_pass(std::make_unique<cat::semantics::TypeChecker>());
   sema_pm.run(program, diag_ctxt);
 

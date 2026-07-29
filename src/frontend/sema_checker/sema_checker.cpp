@@ -16,7 +16,7 @@ static bool is_nested_illegal_kind(const ast::Type &ty) {
 }
 
 static bool validate_borrow_nesting(const ast::Type &ty, Span span,
-                                     error::DiagCtxt &diag) {
+                                    error::DiagCtxt &diag) {
   return std::visit(
       [&](const auto &v) -> bool {
         using T = std::decay_t<decltype(v)>;
@@ -25,10 +25,10 @@ static bool validate_borrow_nesting(const ast::Type &ty, Span span,
                       std::is_same_v<T, ast::Type::Own>) {
           if (v.inner) {
             if (is_nested_illegal_kind(*v.inner)) {
-              const char *kind =
-                  std::is_same_v<T, ast::Type::Ref> ? "reference" : 
-                  std::is_same_v<T, ast::Type::CRef> ? "const reference" : 
-                  "ownership";
+              const char *kind = std::is_same_v<T, ast::Type::Ref> ? "reference"
+                                 : std::is_same_v<T, ast::Type::CRef>
+                                     ? "const reference"
+                                     : "ownership";
               diag.error(span,
                          std::string(kind) +
                              " cannot wrap reference or ownership type (" +
@@ -54,17 +54,15 @@ void SemaChecker::check_function(const FunctionDef &func, Span span,
   ctx.get_symbol_table().enter_scope(ScopeKind::Function);
   for (const auto &param : func.function_header.params) {
     validate_borrow_nesting(param.ty, span, diag);
-    sym::BorrrowKind kind = std::visit(
-      overloaded{
-          [](const ast::Type::Ref&)  { return sym::BorrrowKind::isRef; },
-          [](const ast::Type::CRef&) { return sym::BorrrowKind::isCRef; },
-          [](const ast::Type::Own&)  { return sym::BorrrowKind::isOwn; },
-          [](const auto&)            { return sym::BorrrowKind::None; }
-      },
-      param.ty.data
-    );
-    Symbol param_sym = Symbol::new_parameter(param.name, param.ty.clone(),
-                                             kind, span);
+    BorrowKind kind = std::visit(
+        overloaded{
+            [](const ast::Type::Ref &) { return BorrowKind::Ref; },
+            [](const ast::Type::CRef &) { return BorrowKind::CRef; },
+            [](const ast::Type::Own &) { return BorrowKind::Own; },
+            [](const auto &) { return BorrowKind::None; }},
+        param.ty.data);
+    Symbol param_sym =
+        Symbol::new_parameter(param.name, param.ty.clone(), kind, span);
     auto existing = ctx.get_symbol_table().declare(std::move(param_sym));
     if (existing) {
       diag.error(span, "Parameter name '" + param.name +
@@ -189,18 +187,22 @@ void SemaChecker::check_stmt(const StmtNode &stmt, Span span,
   std::visit(
       overloaded{
           [&](const VarDefStmt &var_def) {
-            sym::BorrrowKind kind;
+            BorrowKind kind = BorrowKind::None;
             if (var_def.ty.has_value()) {
-              sym::BorrrowKind kind = std::visit(
-                overloaded{
-                    [](const ast::Type::Ref&)  { return sym::BorrrowKind::isRef; },
-                    [](const ast::Type::CRef&) { return sym::BorrrowKind::isCRef; },
-                    [](const ast::Type::Own&)  { return sym::BorrrowKind::isOwn; },
-                    [](const auto&)            { return sym::BorrrowKind::None; }
-                },
-                var_def.ty->data
-              );
-              if (kind != sym::BorrrowKind::None && !var_def.init.has_value()) {
+              kind = std::visit(overloaded{[](const ast::Type::Ref &) {
+                                             return BorrowKind::Ref;
+                                           },
+                                           [](const ast::Type::CRef &) {
+                                             return BorrowKind::CRef;
+                                           },
+                                           [](const ast::Type::Own &) {
+                                             return BorrowKind::Own;
+                                           },
+                                           [](const auto &) {
+                                             return BorrowKind::None;
+                                           }},
+                                var_def.ty->data);
+              if (kind != BorrowKind::None && !var_def.init.has_value()) {
                 diag.error(span, "Variable '" + var_def.name +
                                      "' of reference or ownership type must be "
                                      "initialized")
@@ -337,6 +339,15 @@ static optional<CallTargetInfo> resolve_method_target(const string &func_name,
       return CallTargetInfo{func_name, func_name, true};
     diag.error(span, "Unknown list method '" + func_name + "'").emit_to(diag);
     return std::nullopt;
+  }
+
+  // clone is auto-generated for classes, strings, and lists
+  if (func_name == "clone") {
+    if (std::get_if<ast::Type::Class>(&ty.data) ||
+        std::get_if<ast::Type::List>(&ty.data) ||
+        std::get_if<ast::Type::Str>(&ty.data) ||
+        std::get_if<ast::Type::TraitObject>(&ty.data))
+      return CallTargetInfo{func_name, func_name, true};
   }
 
   // class method → mangle ClassName_methodName
@@ -648,15 +659,20 @@ void SemaChecker::check_expr(const ExprNode &expr, Span span,
             ctx.get_symbol_table().enter_scope(ScopeKind::Function);
             for (size_t i = 0; i < lambda.params.size(); ++i) {
               auto &pt = lambda.params[i];
-              sym::BorrrowKind kind = std::visit(
-                overloaded{
-                    [](const ast::Type::Ref&)  { return sym::BorrrowKind::isRef; },
-                    [](const ast::Type::CRef&) { return sym::BorrrowKind::isCRef; },
-                    [](const ast::Type::Own&)  { return sym::BorrrowKind::isOwn; },
-                    [](const auto&)            { return sym::BorrrowKind::None; }
-                },
-                pt.ty.data
-              );
+              BorrowKind kind =
+                  std::visit(overloaded{[](const ast::Type::Ref &) {
+                                          return BorrowKind::Ref;
+                                        },
+                                        [](const ast::Type::CRef &) {
+                                          return BorrowKind::CRef;
+                                        },
+                                        [](const ast::Type::Own &) {
+                                          return BorrowKind::Own;
+                                        },
+                                        [](const auto &) {
+                                          return BorrowKind::None;
+                                        }},
+                             pt.ty.data);
               Symbol param_sym = Symbol::new_parameter(
                   lambda.params[i].name, pt.ty.clone(), kind, span);
               ctx.get_symbol_table().declare(std::move(param_sym));

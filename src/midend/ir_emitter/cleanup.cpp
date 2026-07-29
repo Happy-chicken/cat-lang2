@@ -16,6 +16,7 @@ CleanupKind CleanupManager::classify_type(const ast::Type &ty) {
   return std::visit(
       overloaded{
           [](const ast::Type::Ref &) { return CleanupKind::None; },
+          [](const ast::Type::CRef &) { return CleanupKind::None; },
           [](const ast::Type::Own &o) {
             if (!o.inner)
               return CleanupKind::None;

@@ -160,6 +160,43 @@ auto emit_list_pop(const IrGenCtxtRef &ctx, llvm::Value *list_ptr,
   return ctx.builder.CreateLoad(elem_ty, elem_ptr);
 }
 
+auto build_func_clone(const semantics::Type &elem_ty) -> semantics::Type {
+  std::vector<std::unique_ptr<semantics::Type>> params;
+  params.push_back(
+      std::make_unique<semantics::Type>(semantics::Type::list(elem_ty.clone())));
+  return semantics::Type::func(
+      std::move(params), semantics::Type::list(elem_ty.clone()));
+}
+
+auto emit_list_clone(const IrGenCtxtRef &ctx, llvm::Value *list_ptr,
+                     llvm::StructType *st, llvm::Type *elem_ty,
+                     llvm::ArrayRef<llvm::Value *>, Span) -> llvm::Value * {
+  auto &c = ctx.ctx();
+  auto *len_val = ctx.builder.CreateLoad(cat::ir::i64(c),
+                                         ctx.builder.CreateStructGEP(st, list_ptr, 0));
+  auto *cap_val = ctx.builder.CreateLoad(cat::ir::i64(c),
+                                         ctx.builder.CreateStructGEP(st, list_ptr, 1));
+  auto *old_data = ctx.builder.CreateLoad(cat::ir::ptr_ty(c),
+                                          ctx.builder.CreateStructGEP(st, list_ptr, 2));
+
+  auto *malloc_fn = ctx.declare_runtime("malloc", cat::ir::ptr_ty(c),
+                                        {cat::ir::i64(c)}, false);
+  auto *memcpy_fn = ctx.declare_runtime("memcpy", cat::ir::ptr_ty(c),
+                                        {cat::ir::ptr_ty(c), cat::ir::ptr_ty(c), cat::ir::i64(c)},
+                                        false);
+  auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
+      llvm::ConstantExpr::getSizeOf(elem_ty), cat::ir::i64(c));
+  auto *total = ctx.builder.CreateMul(len_val, elem_sz);
+  auto *new_data = ctx.builder.CreateCall(malloc_fn, {total}, "clonedata");
+  ctx.builder.CreateCall(memcpy_fn, {new_data, old_data, total});
+
+  llvm::Value *result = llvm::UndefValue::get(st);
+  result = ctx.builder.CreateInsertValue(result, len_val, {0u});
+  result = ctx.builder.CreateInsertValue(result, len_val, {1u});
+  result = ctx.builder.CreateInsertValue(result, new_data, {2u});
+  return result;
+}
+
 } // namespace
 
 void register_list_builtins(BuiltinRegistry &reg) {
@@ -168,6 +205,7 @@ void register_list_builtins(BuiltinRegistry &reg) {
                         {"len", 0, build_func_len, emit_list_len},
                         {"push", 1, build_func_push, emit_list_push},
                         {"pop", 0, build_func_pop, emit_list_pop},
+                        {"clone", 0, build_func_clone, emit_list_clone},
                     });
 }
 

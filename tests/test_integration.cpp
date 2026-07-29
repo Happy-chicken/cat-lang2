@@ -1,6 +1,7 @@
 #include "diag.h"
 #include "file.h"
 #include "flow_checker.h"
+#include "borrow_checker.h"
 #include "frontend/sema_checker/pass_manager.h"
 #include "frontend/type_checker/type_checker.h"
 #include "ir_emitter.h"
@@ -26,6 +27,7 @@ static int compile_and_run(const string &source) {
   sema_pm.add_pass(std::make_unique<cat::Resolver>());
   sema_pm.add_pass(std::make_unique<cat::SemaChecker>());
   sema_pm.add_pass(std::make_unique<cat::FlowChecker>());
+  sema_pm.add_pass(std::make_unique<cat::BorrowChecker>());
   sema_pm.add_pass(std::make_unique<cat::semantics::TypeChecker>());
   sema_pm.run(program, diag);
 
@@ -34,6 +36,9 @@ static int compile_and_run(const string &source) {
 
   cat::ir::IrEmitter emitter("<test>", diag, sema_pm.get_sema_ctxt());
   emitter.compile(program);
+
+  if (diag.has_errors())
+    return -999;
 
   cat::jit::JIT jit(diag);
   jit.add_symbol("malloc", reinterpret_cast<void *>(&malloc));
@@ -478,4 +483,171 @@ TEST(Integration, LambdaReturningLambda) {
         }
     )"),
             7);
+}
+
+TEST(Integration, CrefParam) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn get(x: cref<int>) -> int { return x; }
+        fn main()->int { let a = 42; return get(a); }
+    )"),
+            42);
+}
+
+TEST(Integration, ListClone) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let xs = [1, 2, 3];
+            let ys = xs.clone();
+            ys[0] = 99;
+            if (xs[0] == 1) { return 0; }
+            return 1;
+        }
+    )"),
+            0);
+}
+
+TEST(Integration, ListCloneThenUseOriginal) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let xs = [1, 2, 3];
+            let ys = xs.clone();
+            if (xs[0] == 1) { return 0; }
+            return 1;
+        }
+    )"),
+            0);
+}
+
+TEST(Integration, ClassClone) {
+  EXPECT_EQ(compile_and_run(R"(
+        class Point {
+            let x: int = 0;
+            let y: int = 0;
+        }
+        fn main()->int {
+            let p = Point(1, 2);
+            let q = p.clone();
+            q.x = 99;
+            if (p.x == 1) { return 0; }
+            return 1;
+        }
+    )"),
+            0);
+}
+
+TEST(Integration, ClassParamDeepClone) {
+  EXPECT_EQ(compile_and_run(R"(
+        class Point {
+            let x: int = 0;
+            let y: int = 0;
+        }
+        fn mutate(p: Point) { p.x = 99; }
+        fn main()->int {
+            let p = Point(1, 2);
+            mutate(p);
+            if (p.x == 1) { return 0; }
+            return 1;
+        }
+    )"),
+            0);
+}
+
+TEST(Integration, ListParamDeepClone) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn mutate(xs: list<int>) -> int { xs[0] = 99; return xs[0]; }
+        fn main()->int { let xs = [1, 2, 3]; mutate(xs); return xs[0]; }
+    )"),
+            1);
+}
+
+TEST(Integration, LocalRefWriteThrough) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let a = 5;
+            {
+                let r: ref<int> = a;
+                r = 10;
+            }
+            return a;
+        }
+    )"),
+            10);
+}
+
+TEST(Integration, LocalCrefRead) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let a = 7;
+            let c: cref<int> = a;
+            return c;
+        }
+    )"),
+            7);
+}
+
+TEST(Integration, ScopeBasedBorrowRelease) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let a = 5;
+            {
+                let r: ref<int> = a;
+                r = 10;
+            }
+            return a;
+        }
+    )"),
+            10);
+}
+
+TEST(Integration, ScopeBasedCrefRelease) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let a = 5;
+            let old = a;
+            {
+                let c: cref<int> = a;
+            }
+            a = 10;
+            if (old == 5) { return a; }
+            return 0;
+        }
+    )"),
+            10);
+}
+
+TEST(Integration, CrefWriteRejected) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn main()->int {
+            let a = 5;
+            let c: cref<int> = a;
+            c = 10;
+            return 0;
+        }
+    )"),
+            -999);
+}
+
+TEST(Integration, ClassCloneThenMutateOriginal) {
+  EXPECT_EQ(compile_and_run(R"(
+        class Point {
+            let x: int = 0;
+            let y: int = 0;
+        }
+        fn main()->int {
+            let p = Point(1, 2);
+            let q = p.clone();
+            p.x = 99;
+            if (p.x == 99) { return q.x; }
+            return 0;
+        }
+    )"),
+            1);
+}
+
+TEST(Integration, RefThroughParamCallerSeesMutation) {
+  EXPECT_EQ(compile_and_run(R"(
+        fn inc(x: ref<int>) { x = x + 1; }
+        fn main()->int { let a = 5; inc(a); return a; }
+    )"),
+            6);
 }
