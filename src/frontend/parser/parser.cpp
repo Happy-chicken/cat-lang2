@@ -54,7 +54,7 @@ std::optional<Token> Parser::consume(TokenKind kind, std::string_view msg) {
     advance();
     return tok;
   }
-  auto span = current_span();
+  auto span = current_token ? current_token->span : last_span;
   diag_ctxt.error(span, string(msg))
       .note("Expected " + string(tokenkind_to_string(kind)) + ", but found " +
             (current_token.has_value()
@@ -64,8 +64,8 @@ std::optional<Token> Parser::consume(TokenKind kind, std::string_view msg) {
   return std::nullopt;
 }
 
-Span Parser::current_span() const {
-  return current_token.has_value() ? current_token->span : last_span;
+Span Parser::get_last_span() const {
+  return last_span;
 }
 
 template <typename T>
@@ -76,7 +76,7 @@ error::ParseResult<T> Parser::err(Span span, std::string_view msg) {
 
 template <typename T>
 error::ParseResult<T> Parser::unexpected(std::string_view context) {
-  auto span = current_span();
+  auto span = current_token ? current_token->span : last_span;
   string msg = "unexpected ";
   if (current_token.has_value()) {
     msg += tokenkind_to_string(current_token->kind);
@@ -156,7 +156,7 @@ error::ParseResult<ItemNode> Parser::parse_item() {
   if (!current_token.has_value()) {
     return unexpected<ItemNode>("Unexpected at end of file");
   }
-  auto span = current_span();
+  auto span = current_token->span;
   switch (current_token->kind) {
   case TokenKind::Decl: {
     auto decl = parse_func_decl();
@@ -215,7 +215,7 @@ error::ParseResult<StmtNode> Parser::parse_stmt() {
   if (!current_token.has_value()) {
     return unexpected<StmtNode>("Unexpected at end of file");
   }
-  auto span = current_span();
+  auto span = current_token->span;
   switch (current_token->kind) {
   case TokenKind::If: {
     auto if_stmt = parse_if_stmt();
@@ -282,6 +282,7 @@ error::ParseResult<StmtNode> Parser::parse_stmt() {
 }
 
 error::ParseResult<StmtNode> Parser::parse_if_stmt() {
+  auto if_span = current_token->span;
   consume(TokenKind::If, "Expected 'if' at the begining of is statement.");
   auto condition = parse_expr();
   if (!condition.has_value()) {
@@ -315,13 +316,14 @@ error::ParseResult<StmtNode> Parser::parse_if_stmt() {
     }
     else_branch = std::make_unique<Block>(std::move(*else_block));
   }
-  return StmtNode{current_span(),
+  return StmtNode{if_span.merge(get_last_span()),
                   make_if(std::move(*condition),
                           std::make_unique<Block>(std::move(*then_branch)),
                           std::move(elif_braches), std::move(else_branch))};
 }
 
 error::ParseResult<StmtNode> Parser::parse_loop_stmt() {
+  auto while_span = current_token->span;
   consume(TokenKind::While,
           "Expected 'while' at the begining of while statement.");
   auto condition = parse_expr();
@@ -332,26 +334,29 @@ error::ParseResult<StmtNode> Parser::parse_loop_stmt() {
   if (!body.has_value()) {
     return std::nullopt;
   }
-  return StmtNode{current_span(),
+  return StmtNode{while_span.merge(get_last_span()),
                   make_loop(std::move(*condition),
                             std::make_unique<Block>(std::move(*body)))};
 }
 
 error::ParseResult<StmtNode> Parser::parse_break_stmt() {
+  auto brk_span = current_token->span;
   consume(TokenKind::Break,
           "Expected 'break' at the beginning of break statement.");
   consume(TokenKind::Semicolon, "Expected ';' after break statement.");
-  return StmtNode{current_span(), make_break()};
+  return StmtNode{brk_span.merge(get_last_span()), make_break()};
 }
 
 error::ParseResult<StmtNode> Parser::parse_continue_stmt() {
+  auto cont_span = current_token->span;
   consume(TokenKind::Continue,
           "Expected 'continue' at the beginning of continue statement.");
   consume(TokenKind::Semicolon, "Expected ';' after continue statement.");
-  return StmtNode{current_span(), make_continue()};
+  return StmtNode{cont_span.merge(get_last_span()), make_continue()};
 }
 
 error::ParseResult<StmtNode> Parser::parse_return_stmt() {
+  auto ret_span = current_token->span;
   consume(TokenKind::Return,
           "Expected 'return' at the begining of return statement.");
   optional<ExprNode> expr = std::nullopt;
@@ -363,7 +368,7 @@ error::ParseResult<StmtNode> Parser::parse_return_stmt() {
     expr = std::move(*ret_expr);
   }
   consume(TokenKind::Semicolon, "Expected ';' after return statement.");
-  return StmtNode{current_span(), make_return(std::move(expr))};
+  return StmtNode{ret_span.merge(get_last_span()), make_return(std::move(expr))};
 }
 
 error::ParseResult<StmtNode> Parser::parse_block_stmt() {
@@ -371,11 +376,12 @@ error::ParseResult<StmtNode> Parser::parse_block_stmt() {
   if (!block.has_value()) {
     return std::nullopt;
   }
-  return StmtNode{current_span(),
+  return StmtNode{get_last_span(),
                   make_block_stmt(std::make_unique<Block>(std::move(*block)))};
 }
 
 error::ParseResult<StmtNode> Parser::parse_var_def_stmt() {
+  auto let_span = current_token->span;
   consume(TokenKind::Let,
           "Expected 'let' at the beginning of variable definition.");
   auto var_token =
@@ -403,7 +409,7 @@ error::ParseResult<StmtNode> Parser::parse_var_def_stmt() {
     init = std::move(*init_expr);
   }
   consume(TokenKind::Semicolon, "Expected ';' after variable definition.");
-  return StmtNode{current_span(), make_var_def(std::move(var_name),
+  return StmtNode{let_span.merge(get_last_span()), make_var_def(std::move(var_name),
                                                std::move(ty), std::move(init))};
 }
 
@@ -415,7 +421,7 @@ error::ParseResult<ExprNode> Parser::parse_assignment() {
     return std::nullopt;
   }
   if (check(TokenKind::Equal)) {
-    auto eq_span = current_span();
+    auto eq_span = current_token->span;
     advance();
     auto right = parse_assignment();
     if (!right.has_value()) {
@@ -445,7 +451,7 @@ error::ParseResult<ExprNode> Parser::parse_logical_or() {
     return std::nullopt;
   }
   if (check(TokenKind::Or)) {
-    auto op_span = current_span();
+    auto op_span = current_token->span;
     advance();
     auto right = parse_logical_and();
     if (!right.has_value()) {
@@ -466,7 +472,7 @@ error::ParseResult<ExprNode> Parser::parse_logical_and() {
     return std::nullopt;
   }
   if (check(TokenKind::And)) {
-    auto op_span = current_span();
+    auto op_span = current_token->span;
     advance();
     auto right = parse_equality();
     if (!right.has_value()) {
@@ -487,7 +493,7 @@ error::ParseResult<ExprNode> Parser::parse_equality() {
     return std::nullopt;
   }
   while (check_any({TokenKind::EqualEqual, TokenKind::BangEqual})) {
-    auto op_span = current_span();
+    auto op_span = current_token->span;
     auto op_kind = current_token->kind;
     advance();
     auto right = parse_comparison();
@@ -516,7 +522,7 @@ error::ParseResult<ExprNode> Parser::parse_comparison() {
   }
   while (check_any({TokenKind::Less, TokenKind::LessEqual, TokenKind::Greater,
                     TokenKind::GreaterEqual})) {
-    auto op_span = current_span();
+    auto op_span = current_token->span;
     auto op_kind = current_token->kind;
     advance();
     auto right = parse_term();
@@ -555,7 +561,7 @@ error::ParseResult<ExprNode> Parser::parse_term() {
     return std::nullopt;
   }
   while (check_any({TokenKind::Plus, TokenKind::Minus})) {
-    auto op_span = current_span();
+    auto op_span = current_token->span;
     auto op_kind = current_token->kind;
     advance();
     auto right = parse_factor();
@@ -588,7 +594,7 @@ error::ParseResult<ExprNode> Parser::parse_factor() {
     return std::nullopt;
   }
   while (check_any({TokenKind::Star, TokenKind::Slash})) {
-    auto op_span = current_span();
+    auto op_span = current_token->span;
     auto op_kind = current_token->kind;
     advance();
     auto right = parse_unary();
@@ -618,7 +624,7 @@ error::ParseResult<ExprNode> Parser::parse_factor() {
 error::ParseResult<ExprNode> Parser::parse_unary() {
   if (check_any({TokenKind::Bang, TokenKind::Minus, TokenKind::BitwiseAnd,
                  TokenKind::Star})) {
-    auto op_span = current_span();
+    auto op_span = current_token->span;
     auto op_kind = current_token->kind;
     advance();
 
@@ -686,16 +692,17 @@ error::ParseResult<ExprNode> Parser::parse_postfix() {
         return std::nullopt;
       }
       auto object_node = std::make_unique<ExprNode>(std::move(*expr));
+      auto object_span = object_node->span;
       auto member_expr =
           make_member(std::move(object_node), field_token->lexeme);
-      expr = ExprNode{current_span(), std::move(member_expr)};
+      expr = ExprNode{object_span.merge(field_token->span), std::move(member_expr)};
       continue;
     }
     case TokenKind::LeftBracket: {
       advance(); // consume '['
       if (!can_start_expr()) {
         return err<ExprNode>(
-            current_span(),
+            current_token ? current_token->span : last_span,
             "Expected expression inside '[...]', but found " +
                 (current_token.has_value()
                      ? string(tokenkind_to_string(current_token->kind))
@@ -705,28 +712,30 @@ error::ParseResult<ExprNode> Parser::parse_postfix() {
       if (!index_expr.has_value()) {
         return std::nullopt;
       }
-      if (!consume(TokenKind::RightBracket, "Expected ']' after index.")) {
-        return std::nullopt;
-      }
+      consume(TokenKind::RightBracket, "Expected ']' after index.");
+      auto rbracket_span = get_last_span();
       auto object_node = std::make_unique<ExprNode>(std::move(*expr));
+      auto object_span = object_node->span;
       auto index_node = std::make_unique<ExprNode>(std::move(*index_expr));
       auto index_expr_node =
           make_index(std::move(object_node), std::move(index_node));
-      expr = ExprNode{current_span(), std::move(index_expr_node)};
+      expr = ExprNode{object_span.merge(rbracket_span), std::move(index_expr_node)};
       continue;
     }
     case TokenKind::PlusPlus: {
+      auto op_span = current_token->span;
       advance(); // consume '++'
       auto object_node = std::make_unique<ExprNode>(std::move(*expr));
       auto inc_expr = make_unary(UnaryOp::Inc, std::move(object_node));
-      expr = ExprNode{current_span(), std::move(inc_expr)};
+      expr = ExprNode{object_node->span.merge(op_span), std::move(inc_expr)};
       continue;
     }
     case TokenKind::MinusMinus: {
+      auto op_span = current_token->span;
       advance(); // consume '--'
       auto object_node = std::make_unique<ExprNode>(std::move(*expr));
       auto dec_expr = make_unary(UnaryOp::Dec, std::move(object_node));
-      expr = ExprNode{current_span(), std::move(dec_expr)};
+      expr = ExprNode{object_node->span.merge(op_span), std::move(dec_expr)};
       continue;
     }
     default:
@@ -739,7 +748,7 @@ error::ParseResult<ExprNode> Parser::parse_primary() {
   if (!current_token.has_value()) {
     return unexpected<ExprNode>("Unexpected at end of file");
   }
-  auto span = current_span();
+  auto span = current_token->span;
   switch (current_token->kind) {
   case TokenKind::IntLiteral: {
     auto value = std::stoll(current_token->lexeme);
@@ -823,7 +832,7 @@ error::ParseResult<ExprNode> Parser::parse_primary() {
 }
 
 error::ParseResult<Block> Parser::parse_block() {
-  auto open_span = current_span();
+  auto open_span = current_token->span;
   consume(TokenKind::LeftBrace, "Expected '{' at the beginning of block.");
   auto stmts = vector<StmtNode>{};
   while (!check(TokenKind::RightBrace) && !is_at_end()) {
@@ -1193,6 +1202,7 @@ error::ParseResult<std::vector<uptr<ExprNode>>> Parser::parse_arguments() {
 }
 
 error::ParseResult<ExprNode> Parser::finish_call(ExprNode callee) {
+  auto callee_span = callee.span;
   consume(TokenKind::LeftParen, "Expected '(' after callee.");
   auto args = parse_arguments();
   if (!args.has_value()) {
@@ -1201,11 +1211,11 @@ error::ParseResult<ExprNode> Parser::finish_call(ExprNode callee) {
   consume(TokenKind::RightParen, "Expected ')' after arguments.");
   auto callee_node = std::make_unique<ExprNode>(std::move(callee));
   auto call_expr = make_call(std::move(callee_node), std::move(*args));
-  return ExprNode{current_span(), std::move(call_expr)};
+  return ExprNode{callee_span.merge(get_last_span()), std::move(call_expr)};
 }
 
 error::ParseResult<ExprNode> Parser::parse_lambda() {
-  auto span = current_span();
+  auto span = current_token->span;
   advance(); // consume 'fn'
   consume(TokenKind::LeftParen, "Expected '(' after 'fn'.");
   auto params = std::vector<Parameter>{};

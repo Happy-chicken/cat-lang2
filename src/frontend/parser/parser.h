@@ -30,7 +30,7 @@ private:
 
   std::optional<Token> consume(TokenKind kind, std::string_view msg);
 
-  Span current_span() const;
+  Span get_last_span() const;
 
   template <typename T>
   error::ParseResult<T> err(Span span, std::string_view msg);
