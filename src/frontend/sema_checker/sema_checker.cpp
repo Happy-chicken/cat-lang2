@@ -311,7 +311,7 @@ static string extract_call_name(const ExprNode &callee) {
 struct CallTargetInfo {
   string resolved_name; // symbol-table name (mangled for class methods)
   string display_name;  // user-written name (for diagnostics)
-  bool is_builtin;
+  std::optional<runtime::MethodMeta> builtin_meta;
 };
 
 // For obj.method(...), resolve whether the call goes to a list builtin
@@ -335,46 +335,51 @@ static optional<CallTargetInfo> resolve_method_target(const string &func_name,
 
   // list builtin
   if (std::get_if<ast::Type::List>(&ty.data)) {
-    if (ctx.get_builtins().is_method_declared(runtime::LIST_TAG, func_name))
-      return CallTargetInfo{func_name, func_name, true};
+    if (auto desc = ctx.get_builtins().lookup(runtime::LIST_TAG, func_name))
+      return CallTargetInfo{func_name, func_name, desc->get().meta};
     diag.error(span, "Unknown list method '" + func_name + "'").emit_to(diag);
     return std::nullopt;
   }
 
-  // clone is auto-generated for classes, strings, and lists
-  if (func_name == "clone") {
+  // str builtin
+  if (std::get_if<ast::Type::Str>(&ty.data)) {
+    if (auto desc = ctx.get_builtins().lookup(runtime::STR_TAG, func_name))
+      return CallTargetInfo{func_name, func_name, desc->get().meta};
+    diag.error(span, "Unknown str method '" + func_name + "'").emit_to(diag);
+    return std::nullopt;
+  }
+
+  // universal builtins that auto-apply to class / trait-object
+  auto univ = ctx.get_builtins().lookup_universal(func_name);
+  if (univ) {
     if (std::get_if<ast::Type::Class>(&ty.data) ||
-        std::get_if<ast::Type::List>(&ty.data) ||
-        std::get_if<ast::Type::Str>(&ty.data) ||
         std::get_if<ast::Type::TraitObject>(&ty.data))
-      return CallTargetInfo{func_name, func_name, true};
+      return CallTargetInfo{func_name, func_name, univ->get().meta};
   }
 
   // class method → mangle ClassName_methodName
   if (auto *cls = std::get_if<ast::Type::Class>(&ty.data))
-    return CallTargetInfo{cls->name + "_" + func_name, func_name, false};
+    return CallTargetInfo{cls->name + "_" + func_name, func_name, std::nullopt};
 
   return std::nullopt;
 }
 
-// Check arity of a builtin list method against the registry.
-static void check_builtin_arity(const string &func_name, size_t arg_count,
-                                Span span, semantics::SemaCtxt &ctx,
-                                error::DiagCtxt &diag) {
-  auto desc = ctx.get_builtins().lookup(runtime::LIST_TAG, func_name);
-  if (desc && arg_count != desc->get().arity) {
+// Check arity of a builtin method using its metadata.
+static void check_builtin_arity(const runtime::MethodMeta &meta,
+                                const string &func_name, size_t arg_count,
+                                Span span, error::DiagCtxt &diag) {
+  if (arg_count != meta.arity) {
     diag.error(span, "'" + func_name + "' expects " +
-                         std::to_string(desc->get().arity) +
+                         std::to_string(meta.arity) +
                          " arguments, got " + std::to_string(arg_count))
         .emit_to(diag);
   }
 }
 
-// list.push / list.pop invalidate compile-time list length tracking.
-static void clear_list_len_for_mutating_builtin(const string &func_name,
+static void clear_list_len_for_mutating_builtin(const runtime::MethodMeta &meta,
                                                 const CallExpr &call,
                                                 semantics::SemaCtxt &ctx) {
-  if (func_name != "push" && func_name != "pop")
+  if (meta.effect != runtime::MethodEffect::Mutating)
     return;
   auto &member = std::get<MemberExpr>(call.callee->expr);
   auto *var = std::get_if<Variable>(&member.object->expr);
@@ -466,13 +471,14 @@ static void check_call_expr(const CallExpr &call, Span span,
     if (!target)
       return; // resolution failed — error already reported
   } else {
-    target = CallTargetInfo{func_name, func_name, false};
+    target = CallTargetInfo{func_name, func_name, std::nullopt};
   }
 
-  // (6) builtin path — arity from registry; push/pop side effects
-  if (target->is_builtin) {
-    check_builtin_arity(func_name, call.args.size(), span, ctx, diag);
-    clear_list_len_for_mutating_builtin(func_name, call, ctx);
+  // (6) builtin path — arity / side effects driven by metadata
+  if (target->builtin_meta) {
+    check_builtin_arity(*target->builtin_meta, func_name, call.args.size(),
+                        span, diag);
+    clear_list_len_for_mutating_builtin(*target->builtin_meta, call, ctx);
     return;
   }
 
@@ -481,8 +487,8 @@ static void check_call_expr(const CallExpr &call, Span span,
   if (!sym) {
     if (ctx.get_builtins().is_standalone_declared(func_name)) {
       auto desc = ctx.get_builtins().lookup_standalone(func_name);
-      // traet print and pritnln
-      if (func_name == "print" || func_name == "println") {
+      if (desc &&
+          (func_name == "print" || func_name == "println")) {
         if (auto *lit = std::get_if<cat::LiteralExpr>(&call.args[0]->expr)) {
           if (!std::get_if<std::string>(&lit->lit)) {
             diag.error(span, "'" + func_name +

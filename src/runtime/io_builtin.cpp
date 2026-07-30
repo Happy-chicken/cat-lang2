@@ -11,6 +11,12 @@ namespace cat::runtime {
 
 namespace {
 
+static llvm::Value *str_data_ptr(llvm::Value *val, llvm::IRBuilder<> &b) {
+  if (auto *st = llvm::dyn_cast<llvm::StructType>(val->getType()))
+    return b.CreateExtractValue(val, {1u});
+  return val;
+}
+
 auto build_print_type() -> semantics::Type {
   std::vector<std::unique_ptr<semantics::Type>> params;
   params.push_back(std::make_unique<semantics::Type>(
@@ -20,6 +26,9 @@ auto build_print_type() -> semantics::Type {
 }
 
 static std::string extract_format_string(llvm::Value *val) {
+  if (auto *cs = llvm::dyn_cast<llvm::ConstantStruct>(val))
+    val = cs->getOperand(1); // str struct → data ptr (field 1)
+
   if (auto *gv = llvm::dyn_cast<llvm::GlobalVariable>(val)) {
     if (auto *init =
             llvm::dyn_cast<llvm::ConstantDataArray>(gv->getInitializer())) {
@@ -77,14 +86,17 @@ static std::string build_printf_format(const std::string &raw_fmt,
 static llvm::Value *emit_formatted(const IrGenCtxtRef &ctx,
                                    llvm::ArrayRef<llvm::Value *> args,
                                    bool newline) {
-  // TODO: we now dont have to generate origin fmt;
   auto raw_fmt = extract_format_string(args[0]);
   auto *fn = ctx.declare_runtime("printf", cat::ir::i32(ctx.ctx()),
                                  {cat::ir::ptr_ty(ctx.ctx())}, true);
   auto var_args = args.slice(1);
 
   if (raw_fmt.empty()) {
-    auto *call = ctx.builder.CreateCall(fn, args);
+    auto *data = str_data_ptr(args[0], ctx.builder);
+    std::vector<llvm::Value *> call_args = {data};
+    for (auto *a : var_args)
+      call_args.push_back(a);
+    auto *call = ctx.builder.CreateCall(fn, call_args);
     if (newline) {
       auto *nl = ctx.builder.CreateGlobalString("\n");
       return ctx.builder.CreateCall(fn, {nl});
@@ -107,7 +119,6 @@ auto emit_print(const IrGenCtxtRef &ctx, llvm::ArrayRef<llvm::Value *> args,
                 Span) -> llvm::Value * {
   if (args.empty())
     return nullptr;
-
   return emit_formatted(ctx, args, false);
 }
 
@@ -115,12 +126,12 @@ auto emit_println(const IrGenCtxtRef &ctx, llvm::ArrayRef<llvm::Value *> args,
                   Span) -> llvm::Value * {
   if (args.empty())
     return nullptr;
-
   auto &c = ctx.ctx();
   if (args.size() == 1) {
     auto *puts_fn = ctx.declare_runtime("puts", cat::ir::i32(c),
                                         {cat::ir::ptr_ty(c)}, false);
-    return ctx.builder.CreateCall(puts_fn, {args[0]});
+    return ctx.builder.CreateCall(
+        puts_fn, {str_data_ptr(args[0], ctx.builder)});
   }
   return emit_formatted(ctx, args, true);
 }
@@ -128,8 +139,10 @@ auto emit_println(const IrGenCtxtRef &ctx, llvm::ArrayRef<llvm::Value *> args,
 } // namespace
 
 void register_io_builtins(BuiltinRegistry &reg) {
-  reg.register_func({"print", 1, true, build_print_type, emit_print});
-  reg.register_func({"println", 1, true, build_print_type, emit_println});
+  reg.register_func(
+      {"print", 1, true, build_print_type, emit_print});
+  reg.register_func(
+      {"println", 1, true, build_print_type, emit_println});
 }
 
 } // namespace cat::runtime

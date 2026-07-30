@@ -62,9 +62,10 @@ public:
 
   ListType *lookup_or_create_list_type(llvm::Type *elem_ty);
   ListType *lookup_list_type_by_struct(llvm::StructType *st);
+  StrType *get_str_type();
 
-  llvm::Value *emit_builtin_method(const runtime::BuiltinMethodDesc &desc,
-                                   ListType *lt, llvm::StructType *st,
+  llvm::Value *emit_builtin_method(const runtime::BuiltinMethod &desc,
+                                   llvm::StructType *st, llvm::Type *elem_ty,
                                    const ExprNode &obj_expr,
                                    const vector<uptr<ExprNode>> &args,
                                    Span span);

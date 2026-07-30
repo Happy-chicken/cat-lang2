@@ -49,12 +49,17 @@ struct ListType {
   llvm::Type *elem_ty;
 };
 
+struct StrType {
+  llvm::StructType *struct_ty;
+};
+
 struct CodeGenCtxt {
   uptr<llvm::LLVMContext> llvm_ctx;
   uptr<llvm::IRBuilder<>> builder;
   uptr<llvm::Module> module;
   llvm::StringMap<uptr<ClassInfo>> class_registry;
   llvm::StringMap<uptr<ListType>> list_types;
+  uptr<StrType> str_type;
   uint32_t str_counter = 0;
   uint32_t lambda_counter = 0;
 

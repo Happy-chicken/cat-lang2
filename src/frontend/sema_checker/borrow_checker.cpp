@@ -10,6 +10,7 @@ namespace cat {
 bool BorrowChecker::run(Program &program, semantics::SemaCtxt &ctx,
                         error::DiagCtxt &diag) {
   sym_table = &ctx.get_symbol_table();
+  builtins = &ctx.get_builtins();
   for (const auto &item_node : program.items) {
     std::visit(
         overloaded{[&](const FunctionDef &func) { check_function(func, diag); },
@@ -419,11 +420,13 @@ void BorrowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag,
 
 void BorrowChecker::resolve_call_args(const CallExpr &call,
                                       error::DiagCtxt &diag) {
-  // .clone() → source is read, not moved. Skip ownership tracking.
   if (std::holds_alternative<MemberExpr>(call.callee->expr)) {
     auto &member = std::get<MemberExpr>(call.callee->expr);
-    if (member.field == "clone")
-      return;
+    if (builtins) {
+      auto univ = builtins->lookup_universal(member.field);
+      if (univ && univ->get().meta.effect == runtime::MethodEffect::PureRead)
+        return;
+    }
   }
 
   auto fn_name = std::visit(

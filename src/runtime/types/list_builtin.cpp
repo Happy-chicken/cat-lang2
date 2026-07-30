@@ -187,7 +187,7 @@ auto emit_list_clone(const IrGenCtxtRef &ctx, llvm::Value *list_ptr,
   auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
       llvm::ConstantExpr::getSizeOf(elem_ty), cat::ir::i64(c));
   auto *total = ctx.builder.CreateMul(len_val, elem_sz);
-  auto *new_data = ctx.builder.CreateCall(malloc_fn, {total}, "clonedata");
+  auto *new_data = ctx.builder.CreateCall(malloc_fn, {total}, "clone.list.data");
   ctx.builder.CreateCall(memcpy_fn, {new_data, old_data, total});
 
   llvm::Value *result = llvm::UndefValue::get(st);
@@ -202,10 +202,17 @@ auto emit_list_clone(const IrGenCtxtRef &ctx, llvm::Value *list_ptr,
 void register_list_builtins(BuiltinRegistry &reg) {
   reg.register_type(LIST_TAG,
                     {
-                        {"len", 0, build_func_len, emit_list_len},
-                        {"push", 1, build_func_push, emit_list_push},
-                        {"pop", 0, build_func_pop, emit_list_pop},
-                        {"clone", 0, build_func_clone, emit_list_clone},
+                        {{"len", 0, MethodEffect::PureRead}, build_func_len,
+                         emit_list_len},
+                        {{"push", 1, MethodEffect::Mutating},
+                         build_func_push, emit_list_push},
+                        {{"pop", 0, MethodEffect::Mutating}, build_func_pop,
+                         emit_list_pop},
+                        {{"clone", 0, MethodEffect::PureRead},
+                         build_func_clone, emit_list_clone,
+                         [](const IrGenCtxtRef &, llvm::Value *self,
+                            llvm::ArrayRef<llvm::Value *>,
+                            Span) -> llvm::Value * { return self; }},
                     });
 }
 

@@ -519,15 +519,10 @@ namespace cat::semantics {
       return std::visit(overloaded{
         [&](const Type::StructType::List &list) -> Type {
           auto elem = list.inner ? list.inner->clone() : Type::error();
-          if (member.field == "clone") {
-            std::vector<uptr<Type>> params;
-            params.push_back(
-                std::make_unique<Type>(Type::list(elem.clone())));
-            return Type::func(std::move(params), Type::list(elem.clone()));
-          }
-          auto desc = ctxt.get_builtins().lookup(cat::runtime::LIST_TAG, member.field);
+          auto desc = ctxt.get_builtins().lookup(cat::runtime::LIST_TAG,
+                                                  member.field);
           if (desc) {
-            return desc->get().build_func_type(elem);
+            return desc->get().build_type(elem);
           }
           diag.error(span, "Unknown list method '" + member.field + "'")
               .emit_to(diag);
@@ -540,12 +535,9 @@ namespace cat::semantics {
                 .emit_to(diag);
             return Type::error();
           }
-          if (member.field == "clone") {
-            std::vector<uptr<Type>> params;
-            params.push_back(
-                std::make_unique<Type>(Type::class_(cls.name)));
-            return Type::func(std::move(params), Type::class_(cls.name));
-          }
+          auto univ = ctxt.get_builtins().lookup_universal(member.field);
+          if (univ)
+            return univ->get().build_type(Type::class_(cls.name));
           if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
             for (const auto &[field_name, field_ty] : class_data->fields) {
               if (field_name == member.field) {
@@ -574,11 +566,10 @@ namespace cat::semantics {
           return Type::error();
         },
         [&](const Type::StructType::Str &) -> Type {
-          if (member.field == "clone") {
-            std::vector<uptr<Type>> params;
-            params.push_back(std::make_unique<Type>(Type::str()));
-            return Type::func(std::move(params), Type::str());
-          }
+          auto desc =
+              ctxt.get_builtins().lookup(cat::runtime::STR_TAG, member.field);
+          if (desc)
+            return desc->get().build_type(Type::str());
           diag.error(span, "Unknown str method '" + member.field + "'")
               .emit_to(diag);
           return Type::error();

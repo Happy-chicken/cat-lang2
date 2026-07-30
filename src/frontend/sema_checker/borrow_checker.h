@@ -3,6 +3,9 @@
 #include "pass_interface.h"
 namespace cat {
 class SymbolTable;
+namespace runtime {
+class BuiltinRegistry;
+}
 
 class BorrowChecker : public semantics::Pass {
 public:
@@ -42,6 +45,7 @@ private:
   void resolve_call_args(const CallExpr &call, error::DiagCtxt &diag);
 
   SymbolTable *sym_table = nullptr;
+  runtime::BuiltinRegistry *builtins = nullptr;
 
   unordered_map<string, VarState> states;
   unordered_map<string, int> immut_count;

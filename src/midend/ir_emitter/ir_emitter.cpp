@@ -33,7 +33,7 @@ string list_type_key(llvm::Type *et) {
 }
 } // namespace
 
-// ── list type helpers ──
+// ── list / str type helpers ──
 
 ListType *IrEmitter::lookup_or_create_list_type(llvm::Type *elem_ty) {
   auto key = list_type_key(elem_ty);
@@ -53,6 +53,16 @@ ListType *IrEmitter::lookup_list_type_by_struct(llvm::StructType *st) {
     if (kv.second->struct_ty == st)
       return kv.second.get();
   return nullptr;
+}
+
+StrType *IrEmitter::get_str_type() {
+  if (!ctx->str_type) {
+    auto &c = *ctx->llvm_ctx;
+    ctx->str_type = std::make_unique<StrType>();
+    ctx->str_type->struct_ty =
+        llvm::StructType::create(c, {i64(c), ptr_ty(c)}, "str");
+  }
+  return ctx->str_type.get();
 }
 
 IrEmitter::IrEmitter(const string &name, error::DiagCtxt &diag,
@@ -79,7 +89,7 @@ llvm::Type *IrEmitter::llvm_type(const ast::Type &ast_type) {
         if constexpr (std::is_same_v<T, ast::Type::Void>)
           return void_ty(c);
         if constexpr (std::is_same_v<T, ast::Type::Str>)
-          return ptr_ty(c);
+          return get_str_type()->struct_ty;
         if constexpr (std::is_same_v<T, ast::Type::Ptr>)
           return ptr_ty(c);
         if constexpr (std::is_same_v<T, ast::Type::Own>)
@@ -108,10 +118,6 @@ llvm::Type *IrEmitter::llvm_type(const ast::Type &ast_type) {
         return i32(c);
       },
       ast_type.data);
-}
-
-llvm::Type *IrEmitter::ast_type_to_llvm_type(const ast::Type &ast_type) {
-  return llvm_type(ast_type);
 }
 
 llvm::FunctionType *IrEmitter::llvm_func_type(const ast::Type &ast_type) {
@@ -413,7 +419,7 @@ void IrEmitter::compile_class_clone(const string &name, llvm::StructType *st,
       auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
           llvm::ConstantExpr::getSizeOf(et), i64(c));
       auto *total = ctx->builder->CreateMul(len_val, elem_sz);
-      auto *new_data = ctx->builder->CreateCall(malloc_fn, {total}, "listclone");
+      auto *new_data = ctx->builder->CreateCall(malloc_fn, {total}, "list.clone");
       auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c),
                                              {ptr_ty(c), ptr_ty(c), i64(c)});
       ctx->builder->CreateCall(memcpy_fn, {new_data, old_data, total});
@@ -543,35 +549,34 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
       }
     }
 
-    if (info.borrow_kind == BorrowKind::None &&
-        std::get_if<ast::Type::List>(&p.ty.data)) {
-      auto &list_t = std::get<ast::Type::List>(p.ty.data);
-      auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
-      auto *st = llvm::cast<llvm::StructType>(info.param_ty);
-      auto &b = *ctx->builder;
-      auto *len_val = b.CreateExtractValue(&arg, {0u});
-      auto *old_data = b.CreateExtractValue(&arg, {2u});
-      auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
-          llvm::ConstantExpr::getSizeOf(et), i64(c));
-      auto *total = b.CreateMul(len_val, elem_sz);
-      auto *malloc_fn = declare_runtime_func("malloc", ptr_ty(c), {i64(c)});
-      auto *new_data = b.CreateCall(malloc_fn, {total}, "listcopy");
-      auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c),
-                                             {ptr_ty(c), ptr_ty(c), i64(c)});
-      b.CreateCall(memcpy_fn, {new_data, old_data, total});
-      b.CreateStore(new_data, b.CreateStructGEP(st, a, 2u));
-      cleanup_mgr.register_list_cleanup(*env, a, info.param_ty, st);
-    }
-
-    if (info.borrow_kind == BorrowKind::None &&
-        std::get_if<ast::Type::Class>(&p.ty.data)) {
-      auto &cls = std::get<ast::Type::Class>(p.ty.data);
-      auto clone_fn_name = cls.name + "_clone";
-      auto *clone_fn = ctx->module->getFunction(clone_fn_name);
-      if (clone_fn) {
-        auto *old_ptr = ctx->builder->CreateLoad(info.param_ty, a);
-        auto *new_ptr = ctx->builder->CreateCall(clone_fn, {old_ptr});
-        ctx->builder->CreateStore(new_ptr, a);
+    if (info.borrow_kind == BorrowKind::None ) {
+      if (std::get_if<ast::Type::List>(&p.ty.data)){
+        auto &list_t = std::get<ast::Type::List>(p.ty.data);
+        auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
+        auto *st = llvm::cast<llvm::StructType>(info.param_ty);
+        auto &b = *ctx->builder;
+        auto *len_val = b.CreateExtractValue(&arg, {0u});
+        auto *old_data = b.CreateExtractValue(&arg, {2u});
+        auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
+            llvm::ConstantExpr::getSizeOf(et), i64(c));
+        auto *total = b.CreateMul(len_val, elem_sz);
+        auto *malloc_fn = declare_runtime_func("malloc", ptr_ty(c), {i64(c)});
+        auto *new_data = b.CreateCall(malloc_fn, {total}, "listcopy");
+        auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c),
+                                              {ptr_ty(c), ptr_ty(c), i64(c)});
+        b.CreateCall(memcpy_fn, {new_data, old_data, total});
+        b.CreateStore(new_data, b.CreateStructGEP(st, a, 2u));
+        cleanup_mgr.register_list_cleanup(*env, a, info.param_ty, st);
+      }
+      else if (std::get_if<ast::Type::Class>(&p.ty.data)) {
+        auto &cls = std::get<ast::Type::Class>(p.ty.data);
+        auto clone_fn_name = cls.name + "_clone";
+        auto *clone_fn = ctx->module->getFunction(clone_fn_name);
+        if (clone_fn) {
+          auto *old_ptr = ctx->builder->CreateLoad(info.param_ty, a);
+          auto *new_ptr = ctx->builder->CreateCall(clone_fn, {old_ptr});
+          ctx->builder->CreateStore(new_ptr, a);
+        }
       }
     }
 
@@ -1301,8 +1306,15 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
   if (auto *st = llvm::dyn_cast<llvm::StructType>(self->getType()))
     if (auto *lt = lookup_list_type_by_struct(st))
       if (auto desc = sema.get_builtins().lookup(runtime::LIST_TAG, callee.field))
-        return emit_builtin_method(desc->get(), lt, st, *callee.object,
-                                   call.args, span);
+        return emit_builtin_method(desc->get(), st, lt->elem_ty,
+                                   *callee.object, call.args, span);
+
+  auto *str_st = get_str_type()->struct_ty;
+  if (self->getType() == str_st)
+    if (auto desc = sema.get_builtins().lookup(runtime::STR_TAG, callee.field))
+      return emit_builtin_method(desc->get(), str_st,
+                                 llvm::IntegerType::getInt8Ty(*ctx->llvm_ctx),
+                                 *callee.object, call.args, span);
 
   string mangled = callee.field;
   for (auto &kv : ctx->class_registry) {
@@ -1314,8 +1326,11 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
   }
   auto *fn = ctx->module->getFunction(mangled);
   if (!fn) {
-    if (callee.field == "clone" && self->getType()->isPointerTy())
-      return self;
+    if (self->getType()->isPointerTy()) {
+      auto univ = sema.get_builtins().lookup_universal(callee.field);
+      if (univ && univ->get().ptr_emit)
+        return (*univ->get().ptr_emit)(make_ir_gen_context(), self, {}, span);
+    }
     return nullptr;
   }
 
@@ -1525,7 +1540,8 @@ llvm::Value *IrEmitter::compile_index_ptr(const ExprNode &e) {
             if (st) {
               auto *lt = lookup_list_type_by_struct(st);
               if (lt) {
-                auto *tmp = ctx->builder->CreateAlloca(st, nullptr, "list.tmp");
+                auto *tmp =
+                    ctx->builder->CreateAlloca(st, nullptr, "list.tmp");
                 ctx->builder->CreateStore(ov, tmp);
                 auto *len = ctx->builder->CreateLoad(
                     i64(c), ctx->builder->CreateStructGEP(st, tmp, 0));
@@ -1533,6 +1549,18 @@ llvm::Value *IrEmitter::compile_index_ptr(const ExprNode &e) {
                 auto *data = ctx->builder->CreateLoad(
                     ptr_ty(c), ctx->builder->CreateStructGEP(st, tmp, 2));
                 return ctx->builder->CreateGEP(lt->elem_ty, data, iv);
+              }
+              if (st == get_str_type()->struct_ty) {
+                auto *tmp =
+                    ctx->builder->CreateAlloca(st, nullptr, "str.tmp");
+                ctx->builder->CreateStore(ov, tmp);
+                auto *len = ctx->builder->CreateLoad(
+                    i64(c), ctx->builder->CreateStructGEP(st, tmp, 0));
+                emit_bounds_check(iv, len, ie.index->span);
+                auto *data = ctx->builder->CreateLoad(
+                    ptr_ty(c), ctx->builder->CreateStructGEP(st, tmp, 1));
+                return ctx->builder->CreateGEP(
+                    llvm::IntegerType::getInt8Ty(c), data, iv);
               }
             }
             if (ov->getType()->isPointerTy())
@@ -1658,8 +1686,9 @@ void IrEmitter::emit_list_with_init_fields(
 }
 
 llvm::Value *IrEmitter::emit_builtin_method(
-    const runtime::BuiltinMethodDesc &desc, ListType *lt, llvm::StructType *st,
-    const ExprNode &obj_expr, const vector<uptr<ExprNode>> &args, Span span) {
+    const runtime::BuiltinMethod &desc, llvm::StructType *st,
+    llvm::Type *elem_ty, const ExprNode &obj_expr,
+    const vector<uptr<ExprNode>> &args, Span span) {
   auto *list_ptr =
       std::visit(overloaded{
                      [&](const Variable &var) -> llvm::Value * {
@@ -1669,8 +1698,8 @@ llvm::Value *IrEmitter::emit_builtin_method(
                  },
                  obj_expr.expr);
   if (!list_ptr) {
-    diag.error(span, "Cannot call '" + desc.name +
-                         "' on non-variable list expression")
+    diag.error(span, "Cannot call '" + desc.meta.name +
+                         "' on non-variable expression")
         .emit_to(diag);
     return nullptr;
   }
@@ -1683,12 +1712,19 @@ llvm::Value *IrEmitter::emit_builtin_method(
     arg_vals.push_back(v);
   }
 
-  return desc.emit(make_ir_gen_context(), list_ptr, st, lt->elem_ty,
+  return (*desc.value_emit)(make_ir_gen_context(), list_ptr, st, elem_ty,
                           arg_vals, span);
 }
 
 llvm::Value *IrEmitter::emit_string_literal(const string &s) {
-  return ctx->builder->CreateGlobalString(s);
+  auto &c = *ctx->llvm_ctx;
+  auto *st = get_str_type()->struct_ty;
+  auto *gv = ctx->builder->CreateGlobalString(s);
+  auto *len = llvm::ConstantInt::get(i64(c), s.size());
+  llvm::Value *result = llvm::UndefValue::get(st);
+  result = ctx->builder->CreateInsertValue(result, len, {0u});
+  result = ctx->builder->CreateInsertValue(result, gv, {1u});
+  return result;
 }
 
 // ── module i/o ──
