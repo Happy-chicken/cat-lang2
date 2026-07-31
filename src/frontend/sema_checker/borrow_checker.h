@@ -16,6 +16,7 @@ public:
 
 private:
   enum class VarState { Free, MutBorrowed, ImmutBorrowed, Moved };
+  enum class ParamClass { Copy, Move, BorrowMut, BorrowImmut };
 
   void check_function(const FunctionDef &func, error::DiagCtxt &diag);
   void check_impl_methods(const Impl &imp, error::DiagCtxt &diag);
@@ -31,8 +32,6 @@ private:
   void pop_scope();
   void release_borrow(const string &borrower);
 
-  bool is_struct_ty(const ast::Type &ty) const;
-  enum class ParamClass { Copy, Move, BorrowMut, BorrowImmut };
   ParamClass classify_param(const ast::Type &ty) const;
 
   void mark_moved(const string &name);

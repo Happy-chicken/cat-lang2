@@ -4,6 +4,7 @@
 #include "stmt.h"
 #include "symbol.h"
 #include "symbol_table.h"
+#include <variant>
 
 namespace cat {
 
@@ -33,26 +34,20 @@ void BorrowChecker::check_function(const FunctionDef &func,
 
   for (const auto &p : func.function_header.params) {
     bool is_struct =
-        is_struct_ty(p.ty) &&
-        !std::get_if<ast::Type::Ref>(&p.ty.data) &&
-        !std::get_if<ast::Type::CRef>(&p.ty.data) &&
-        !std::get_if<ast::Type::Own>(&p.ty.data);
+        p.ty.is_struct_type() && !p.ty.is_move_type();
     is_struct_map[p.name] = is_struct;
     auto try_set_class = [&](const uptr<ast::Type> &inner) {
       if (inner)
         if (auto *cls = std::get_if<ast::Type::Class>(&inner->data))
           class_map[p.name] = cls->name;
     };
-    if (auto *cls = std::get_if<ast::Type::Class>(&p.ty.data))
-      class_map[p.name] = cls->name;
-    if (auto *ref = std::get_if<ast::Type::Ref>(&p.ty.data))
-      try_set_class(ref->inner);
-    if (auto *cref = std::get_if<ast::Type::CRef>(&p.ty.data))
-      try_set_class(cref->inner);
-    if (auto *own = std::get_if<ast::Type::Own>(&p.ty.data))
-      try_set_class(own->inner);
-    if (std::get_if<ast::Type::CRef>(&p.ty.data))
-      cref_vars.insert(p.name);
+    std::visit(overloaded{
+      [&](const ast::Type::Class &cls){class_map[p.name] = cls.name;},
+      [&](const ast::Type::Ref &ref){try_set_class(ref.inner);},
+      [&](const ast::Type::CRef &cref){try_set_class(cref.inner);},
+      [&](const ast::Type::Own &own){try_set_class(own.inner);},
+      [](auto&&){},
+    }, p.ty.data);
   }
 
   push_scope();
@@ -104,23 +99,18 @@ void BorrowChecker::release_borrow(const string &borrower) {
 
 // ── type classification helpers ──
 
-bool BorrowChecker::is_struct_ty(const ast::Type &ty) const {
-  return std::get_if<ast::Type::Class>(&ty.data) ||
-         std::get_if<ast::Type::List>(&ty.data) ||
-         std::get_if<ast::Type::Str>(&ty.data);
-}
-
 BorrowChecker::ParamClass
 BorrowChecker::classify_param(const ast::Type &ty) const {
-  if (std::get_if<ast::Type::Ref>(&ty.data))
-    return ParamClass::BorrowMut;
-  if (std::get_if<ast::Type::CRef>(&ty.data))
-    return ParamClass::BorrowImmut;
-  if (std::get_if<ast::Type::Own>(&ty.data))
-    return ParamClass::Move;
-  if (is_struct_ty(ty))
-    return ParamClass::Move;
-  return ParamClass::Copy;
+  return std::visit(overloaded{
+    [](const ast::Type::Ref&) -> ParamClass { return ParamClass::BorrowMut; },
+    [](const ast::Type::CRef&) -> ParamClass { return ParamClass::BorrowImmut; },
+    [](const ast::Type::Own&) -> ParamClass { return ParamClass::Move; },
+    [&](const auto&) -> ParamClass {
+        if (ty.is_struct_type())
+            return ParamClass::Move;
+        return ParamClass::Copy;
+    }
+  }, ty.data);
 }
 
 // ── state helpers ──
@@ -207,10 +197,7 @@ void BorrowChecker::analyze_stmt(const StmtNode &stmt,
             }
 
             bool is_struct =
-                is_struct_ty(*vds.ty) &&
-                !std::get_if<ast::Type::Ref>(&vds.ty->data) &&
-                !std::get_if<ast::Type::CRef>(&vds.ty->data) &&
-                !std::get_if<ast::Type::Own>(&vds.ty->data);
+                vds.ty->is_struct_type() && !vds.ty->is_move_type();
             is_struct_map[vds.name] = is_struct;
             auto try_set_class = [&](const uptr<ast::Type> &inner) {
               if (inner)

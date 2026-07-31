@@ -189,9 +189,7 @@ IrEmitter::resolve_param_type(const ast::Type &ty) {
   } else {
     info.param_ty = llvm_type(ty);
     info.value_ty = info.param_ty;
-    if (std::get_if<ast::Type::Class>(&ty.data) ||
-        std::get_if<ast::Type::List>(&ty.data) ||
-        std::get_if<ast::Type::Str>(&ty.data))
+    if (ty.is_struct_type())
       info.borrow_kind = BorrowKind::Own;
   }
 
@@ -1389,12 +1387,9 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
   auto *call_inst = ctx->builder->CreateCall(fn, args);
 
   if (fn_data && !fn_data->params.empty()) {
-    auto &self_ty = fn_data->params[0].data;
-    bool is_own = std::get_if<ast::Type::Own>(&self_ty) != nullptr;
-    bool is_move_struct = !is_own &&
-        (std::get_if<ast::Type::Class>(&self_ty) ||
-         std::get_if<ast::Type::List>(&self_ty) ||
-         std::get_if<ast::Type::Str>(&self_ty));
+    auto &self_ty = fn_data->params[0];
+    bool is_own = std::get_if<ast::Type::Own>(&self_ty.data) != nullptr;
+    bool is_move_struct = !is_own && self_ty.is_struct_type();
     if (is_own || is_move_struct)
       invalidate_source(*callee.object);
   }

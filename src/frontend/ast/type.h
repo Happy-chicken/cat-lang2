@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../common/common.h"
+#include <cstddef>
 #include <functional>
 #include <sys/types.h>
 #include <type_traits>
@@ -66,6 +67,19 @@ struct Type {
   Type &operator=(const Type &) = delete;
   Type(Type &&) = default;
   Type &operator=(Type &&) = default;
+
+  inline bool is_struct_type() const {
+    return std::get_if<ast::Type::List>(&data) || 
+           std::get_if<ast::Type::Str>(&data) || 
+           std::get_if<ast::Type::Class>(&data) ||
+           std::get_if<ast::Type::TraitObject>(&data);
+  }
+
+  inline bool is_move_type() const {
+    return std::get_if<ast::Type::Ref>(&data) || 
+           std::get_if<ast::Type::CRef>(&data) || 
+           std::get_if<ast::Type::Own>(&data);
+  }
 
   bool operator==(const Type &other) const {
     return std::visit(
