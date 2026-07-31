@@ -205,9 +205,16 @@ void Resolver::declare_impl_methods(const Impl &impl, Span span,
                        first.name + "'")
             .emit_to(diag);
       } else {
-        ast::Type expected = ast::type_class(impl.class_name);
+        const ast::Type *self_inner = &first.ty;
+        if (auto *ref = std::get_if<ast::Type::Ref>(&first.ty.data))
+          self_inner = ref->inner.get();
+        else if (auto *cref = std::get_if<ast::Type::CRef>(&first.ty.data))
+          self_inner = cref->inner.get();
+        else if (auto *own = std::get_if<ast::Type::Own>(&first.ty.data))
+          self_inner = own->inner.get();
 
-        if (first.ty != expected) {
+        ast::Type expected = ast::type_class(impl.class_name);
+        if (!self_inner || *self_inner != expected) {
           diag.error(span, "expected `self: " + impl.class_name +
                                "`, found `self: " + first.ty.to_string() + "`")
               .emit_to(diag);

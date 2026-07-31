@@ -21,9 +21,10 @@ struct CleanupInfo {
   llvm::StructType *list_st;
   bool cancelled = false;
   bool free_base_ptr = false;
+  bool is_str = false;
 };
 
-enum class CleanupKind : uint8_t { None, ClassFree, ListDataFree, OwnListFree };
+enum class CleanupKind : uint8_t { None, ClassFree, ListDataFree, OwnListFree, StrDataFree };
 
 class CleanupManager {
 public:
@@ -39,6 +40,9 @@ public:
   void register_own_list_cleanup(Env &env, llvm::Value *alloca,
                                  llvm::Type *alloca_ty,
                                  llvm::StructType *list_st);
+  void register_str_cleanup(Env &env, llvm::Value *alloca,
+                            llvm::Type *alloca_ty,
+                            llvm::StructType *str_st);
 
   void emit_scope_cleanup(Env &scope);
   void emit_all_cleanups(Env &env);

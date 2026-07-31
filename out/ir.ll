@@ -1,22 +1,28 @@
-; ModuleID = '/home/buyi/code/cat-lang/build/main.cat'
-source_filename = "/home/buyi/code/cat-lang/build/main.cat"
+; ModuleID = '/tmp/test_str_cleanup.cat'
+source_filename = "/tmp/test_str_cleanup.cat"
 
-%Point = type { i32, i32 }
+%str = type { i64, ptr }
 
-define ptr @Point_ctor(i32 %0, i32 %1) {
+@0 = private unnamed_addr constant [6 x i8] c"hello\00", align 1
+
+define i32 @take_str(%str %s) {
 entry:
-  %this = call ptr @malloc(i64 ptrtoint (ptr getelementptr (%Point, ptr null, i32 1) to i64))
-  %2 = getelementptr inbounds nuw %Point, ptr %this, i32 0, i32 0
-  store i32 %0, ptr %2, align 4
-  %3 = getelementptr inbounds nuw %Point, ptr %this, i32 0, i32 1
-  store i32 %1, ptr %3, align 4
-  ret ptr %this
+  %s1 = alloca %str, align 8
+  store %str %s, ptr %s1, align 8
+  %0 = getelementptr inbounds nuw %str, ptr %s1, i32 0, i32 1
+  %1 = load ptr, ptr %0, align 8
+  call void @free(ptr %1)
+  ret i32 0
 }
 
-declare ptr @malloc(i64)
+declare void @free(ptr)
 
 define i32 @main() {
 entry:
-  %0 = call ptr @Point_ctor(i32 1, i32 2)
+  %s = alloca %str, align 8
+  store %str { i64 5, ptr @0 }, ptr %s, align 8
+  %s1 = load %str, ptr %s, align 8
+  %0 = call i32 @take_str(%str %s1)
+  store %str undef, ptr %s, align 8
   ret i32 0
 }

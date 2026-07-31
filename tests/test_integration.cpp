@@ -125,12 +125,12 @@ TEST(Integration, ListLiteral) {
             4);
 }
 
-TEST(Integration, ListPassByValue) {
+TEST(Integration, ListParamMove) {
   EXPECT_EQ(compile_and_run(R"(
-        fn mutate(xs: list<int>) -> int { xs[0] = 99; return xs[0]; }
-        fn main()->int { let xs = [1, 2, 3]; mutate(xs); return xs[0]; }
+        fn consume(xs: list<int>) -> int { return xs[0]; }
+        fn main()->int { let xs = [1, 2, 3]; consume(xs); return xs[0]; }
     )"),
-            1);
+            -999);
 }
 
 TEST(Integration, ListRefParam) {
@@ -535,29 +535,29 @@ TEST(Integration, ClassClone) {
             0);
 }
 
-TEST(Integration, ClassParamDeepClone) {
+TEST(Integration, ClassParamMove) {
   EXPECT_EQ(compile_and_run(R"(
         class Point {
             let x: int = 0;
             let y: int = 0;
         }
-        fn mutate(p: Point) { p.x = 99; }
+        fn take(p: Point) {}
         fn main()->int {
             let p = Point(1, 2);
-            mutate(p);
+            take(p);
             if (p.x == 1) { return 0; }
             return 1;
         }
     )"),
-            0);
+            -999);
 }
 
-TEST(Integration, ListParamDeepClone) {
+TEST(Integration, ListCloneBeforePass) {
   EXPECT_EQ(compile_and_run(R"(
         fn mutate(xs: list<int>) -> int { xs[0] = 99; return xs[0]; }
-        fn main()->int { let xs = [1, 2, 3]; mutate(xs); return xs[0]; }
+        fn main()->int { let xs = [1, 2, 3]; let r = mutate(xs.clone()); return xs[0] + r; }
     )"),
-            1);
+            100);
 }
 
 TEST(Integration, LocalRefWriteThrough) {

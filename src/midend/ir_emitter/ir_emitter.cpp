@@ -189,6 +189,10 @@ IrEmitter::resolve_param_type(const ast::Type &ty) {
   } else {
     info.param_ty = llvm_type(ty);
     info.value_ty = info.param_ty;
+    if (std::get_if<ast::Type::Class>(&ty.data) ||
+        std::get_if<ast::Type::List>(&ty.data) ||
+        std::get_if<ast::Type::Str>(&ty.data))
+      info.borrow_kind = BorrowKind::Own;
   }
 
   return info;
@@ -540,43 +544,18 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
       auto kind = CleanupManager::classify_type(p.ty);
       if (kind == CleanupKind::ClassFree)
         cleanup_mgr.register_class_cleanup(*env, a, info.param_ty);
-      else if (kind == CleanupKind::OwnListFree) {
+      else if (kind == CleanupKind::ListDataFree) {
+        auto *st = llvm::cast<llvm::StructType>(info.param_ty);
+        cleanup_mgr.register_list_cleanup(*env, a, info.param_ty, st);
+      } else if (kind == CleanupKind::OwnListFree) {
         auto &own = std::get<ast::Type::Own>(p.ty.data);
         auto &list_t = std::get<ast::Type::List>(own.inner->data);
         auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
         auto *st = lookup_or_create_list_type(et)->struct_ty;
         cleanup_mgr.register_own_list_cleanup(*env, a, info.param_ty, st);
-      }
-    }
-
-    if (info.borrow_kind == BorrowKind::None ) {
-      if (std::get_if<ast::Type::List>(&p.ty.data)){
-        auto &list_t = std::get<ast::Type::List>(p.ty.data);
-        auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
-        auto *st = llvm::cast<llvm::StructType>(info.param_ty);
-        auto &b = *ctx->builder;
-        auto *len_val = b.CreateExtractValue(&arg, {0u});
-        auto *old_data = b.CreateExtractValue(&arg, {2u});
-        auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
-            llvm::ConstantExpr::getSizeOf(et), i64(c));
-        auto *total = b.CreateMul(len_val, elem_sz);
-        auto *malloc_fn = declare_runtime_func("malloc", ptr_ty(c), {i64(c)});
-        auto *new_data = b.CreateCall(malloc_fn, {total}, "listcopy");
-        auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c),
-                                              {ptr_ty(c), ptr_ty(c), i64(c)});
-        b.CreateCall(memcpy_fn, {new_data, old_data, total});
-        b.CreateStore(new_data, b.CreateStructGEP(st, a, 2u));
-        cleanup_mgr.register_list_cleanup(*env, a, info.param_ty, st);
-      }
-      else if (std::get_if<ast::Type::Class>(&p.ty.data)) {
-        auto &cls = std::get<ast::Type::Class>(p.ty.data);
-        auto clone_fn_name = cls.name + "_clone";
-        auto *clone_fn = ctx->module->getFunction(clone_fn_name);
-        if (clone_fn) {
-          auto *old_ptr = ctx->builder->CreateLoad(info.param_ty, a);
-          auto *new_ptr = ctx->builder->CreateCall(clone_fn, {old_ptr});
-          ctx->builder->CreateStore(new_ptr, a);
-        }
+      } else if (kind == CleanupKind::StrDataFree) {
+        auto *st = get_str_type()->struct_ty;
+        cleanup_mgr.register_str_cleanup(*env, a, info.param_ty, st);
       }
     }
 
@@ -796,6 +775,11 @@ void IrEmitter::compile_stmt(const StmtNode &sn) {
               ret_val = compile_expr(*s.expr);
               if (!ret_val)
                 return;
+              if (auto *var = std::get_if<Variable>(&s.expr->expr)) {
+                auto vi = env->lookup_var(var->name);
+                if (vi.ptr && vi.borrow_kind == BorrowKind::Own)
+                  cleanup_mgr.cancel_cleanup(*env, vi.ptr);
+              }
             }
             cleanup_mgr.emit_all_cleanups(*env);
             if (s.expr)
@@ -834,6 +818,10 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
     else if (std::get_if<ast::Type::CRef>(&s.ty->data))
       kind = BorrowKind::CRef;
     else if (std::get_if<ast::Type::Own>(&s.ty->data))
+      kind = BorrowKind::Own;
+    else if (std::get_if<ast::Type::Class>(&s.ty->data) ||
+             std::get_if<ast::Type::List>(&s.ty->data) ||
+             std::get_if<ast::Type::Str>(&s.ty->data))
       kind = BorrowKind::Own;
   }
 
@@ -890,6 +878,11 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
     val_ty = cref.inner ? llvm_type(*cref.inner) : alloca_ty;
   }
 
+  if (kind == BorrowKind::None && !s.ty && init_val &&
+      init_val->getType()->isPointerTy() &&
+      !llvm::isa<llvm::Function>(init_val))
+    kind = BorrowKind::Own;
+
   env->declare_var(s.name, a, alloca_ty, val_ty, kind,
                    s.ty ? ptr_deref_chain(*s.ty) : vector<llvm::Type *>{},
                    func_ty);
@@ -915,6 +908,12 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
       auto *et = list_t.inner ? llvm_type(*list_t.inner) : i32(c);
       auto *st = lookup_or_create_list_type(et)->struct_ty;
       cleanup_mgr.register_own_list_cleanup(*env, a, alloca_ty, st);
+      registered_cleanup = true;
+      break;
+    }
+    case CleanupKind::StrDataFree: {
+      auto *st = get_str_type()->struct_ty;
+      cleanup_mgr.register_str_cleanup(*env, a, alloca_ty, st);
       registered_cleanup = true;
       break;
     }
@@ -1265,6 +1264,26 @@ IrEmitter::compile_direct_or_ctor_call(const Variable &callee,
   }
 
   auto args = compile_args(fn, call.args, 0, ctor_info);
+
+  if (!is_ctor) {
+    auto *fn_sym = sema.get_symbol_table().resolve(callee.name);
+    auto *fn_data =
+        fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind()) : nullptr;
+    if (fn_data) {
+      for (size_t i = 0; i < args.size() && i < fn_data->params.size(); ++i) {
+        auto &pty = fn_data->params[i].data;
+        if (std::get_if<ast::Type::Ref>(&pty) ||
+            std::get_if<ast::Type::CRef>(&pty)) {
+          if (auto *var = std::get_if<Variable>(&call.args[i]->expr)) {
+            auto vi = env->lookup_var(var->name);
+            if (vi.ptr)
+              args[i] = vi.ptr;
+          }
+        }
+      }
+    }
+  }
+
   auto *call_inst = ctx->builder->CreateCall(fn, args);
   if (!is_ctor)
     invalidate_owned_args(callee.name, call.args, 0);
@@ -1334,16 +1353,49 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
     return nullptr;
   }
 
+  const FunctionData *fn_data = nullptr;
+  {
+    auto *fn_sym = sema.get_symbol_table().resolve(mangled);
+    fn_data =
+        fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind()) : nullptr;
+  }
+  if (fn_data && !fn_data->params.empty()) {
+    if (auto *obj_var = std::get_if<Variable>(&callee.object->expr)) {
+      auto &self_ty = fn_data->params[0].data;
+      if (std::get_if<ast::Type::Ref>(&self_ty) ||
+          std::get_if<ast::Type::CRef>(&self_ty)) {
+        auto vi = env->lookup_var(obj_var->name);
+        if (vi.ptr)
+          self = vi.ptr;
+      }
+    }
+  }
+
   auto args = compile_args(fn, call.args, 1);
+  if (fn_data) {
+    for (size_t i = 0; i < call.args.size() && (i + 1) < fn_data->params.size(); ++i) {
+      auto &pty = fn_data->params[i + 1].data;
+      if (std::get_if<ast::Type::Ref>(&pty) ||
+          std::get_if<ast::Type::CRef>(&pty)) {
+        if (auto *var = std::get_if<Variable>(&call.args[i]->expr)) {
+          auto vi = env->lookup_var(var->name);
+          if (vi.ptr)
+            args[i] = vi.ptr;
+        }
+      }
+    }
+  }
   args.insert(args.begin(), self);
   auto *call_inst = ctx->builder->CreateCall(fn, args);
 
-  if (auto *obj_var = std::get_if<Variable>(&callee.object->expr)) {
-    auto *fn_sym = sema.get_symbol_table().resolve(mangled);
-    auto *fn_data =
-        fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind()) : nullptr;
-    if (fn_data && !fn_data->params.empty() &&
-        std::get_if<ast::Type::Own>(&fn_data->params[0].data))
+  if (fn_data && !fn_data->params.empty()) {
+    auto &self_ty = fn_data->params[0].data;
+    bool is_own = std::get_if<ast::Type::Own>(&self_ty) != nullptr;
+    bool is_move_struct = !is_own &&
+        (std::get_if<ast::Type::Class>(&self_ty) ||
+         std::get_if<ast::Type::List>(&self_ty) ||
+         std::get_if<ast::Type::Str>(&self_ty));
+    if (is_own || is_move_struct)
       invalidate_source(*callee.object);
   }
   invalidate_owned_args(mangled, call.args, 1);
@@ -1391,7 +1443,13 @@ void IrEmitter::invalidate_owned_args(const string &fn_name,
     return;
   for (size_t i = 0;
        i < args.size() && (i + param_offset) < fn_data->params.size(); ++i) {
-    if (!std::get_if<ast::Type::Own>(&fn_data->params[i + param_offset].data))
+    auto &pty = fn_data->params[i + param_offset].data;
+    bool is_own = std::get_if<ast::Type::Own>(&pty) != nullptr;
+    bool is_move_struct = !is_own &&
+        (std::get_if<ast::Type::Class>(&pty) ||
+         std::get_if<ast::Type::List>(&pty) ||
+         std::get_if<ast::Type::Str>(&pty));
+    if (!is_own && !is_move_struct)
       continue;
     invalidate_source(*args[i]);
   }
@@ -1430,11 +1488,18 @@ llvm::Value *IrEmitter::compile_assignment(const AssignExpr &a) {
                   st && lookup_list_type_by_struct(st))
                 cleanup_mgr.register_list_cleanup(*env, vi.ptr, vi.alloca_ty,
                                                   st);
+              else if (auto *st = llvm::dyn_cast<llvm::StructType>(val->getType());
+                       st && st == get_str_type()->struct_ty)
+                cleanup_mgr.register_str_cleanup(*env, vi.ptr, vi.alloca_ty, st);
               else if (val->getType()->isPointerTy() &&
                        !llvm::isa<llvm::Function>(val))
                 cleanup_mgr.register_class_cleanup(*env, vi.ptr, vi.alloca_ty);
             }
-            if (vi.borrow_kind == BorrowKind::Own)
+            if (!self_assign &&
+                (vi.borrow_kind == BorrowKind::Own ||
+                 (vi.borrow_kind == BorrowKind::None &&
+                  val->getType()->isPointerTy() &&
+                  !llvm::isa<llvm::Function>(val))))
               invalidate_source(*a.value);
           },
           [&](const MemberExpr &) {

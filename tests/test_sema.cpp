@@ -350,8 +350,8 @@ TEST(Sema, ScopeBasedBorrowRelease) {
     )"));
 }
 
-TEST(Sema, StructParamDoesNotConsume) {
-    EXPECT_TRUE(run_sema(R"(
+TEST(Sema, StructParamConsumesOnMove) {
+    EXPECT_FALSE(run_sema(R"(
         fn process(xs: list<int>) -> int { return xs[0]; }
         fn main()->int {
             let xs = [1, 2, 3];

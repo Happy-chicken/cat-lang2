@@ -51,6 +51,8 @@ private:
   unordered_map<string, int> immut_count;
   unordered_map<string, string> borrow_map; // borrower → source
   unordered_map<string, bool> is_struct_map; // var_name → is_struct
+  unordered_map<string, string> class_map;   // var_name → class_name
+  unordered_set<string> cref_vars;            // vars that are cref refs
   vector<vector<string>> scopes;
 };
 } // namespace cat

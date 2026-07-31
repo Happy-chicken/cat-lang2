@@ -34,6 +34,8 @@ CleanupKind CleanupManager::classify_type(const ast::Type &ty) {
           },
           [](const ast::Type::Class &) { return CleanupKind::ClassFree; },
           [](const ast::Type::List &) { return CleanupKind::ListDataFree; },
+          // Str cleanup requires runtime-owned tracking; defer.
+          [](const ast::Type::Str &) { return CleanupKind::None; },
           [](const auto &) { return CleanupKind::None; },
       },
       ty.data);
@@ -54,6 +56,13 @@ void CleanupManager::register_own_list_cleanup(Env &env, llvm::Value *alloca,
                                                llvm::Type *alloca_ty,
                                                llvm::StructType *list_st) {
   env.add_cleanup(alloca, alloca_ty, false, list_st, true);
+}
+
+void CleanupManager::register_str_cleanup(Env &env, llvm::Value *alloca,
+                                          llvm::Type *alloca_ty,
+                                          llvm::StructType *str_st) {
+  env.add_cleanup(alloca, alloca_ty, false, str_st);
+  env.cleanups.back().is_str = true;
 }
 
 bool CleanupManager::cancel_cleanup(Env &env, llvm::Value *alloca) {
@@ -83,6 +92,11 @@ void CleanupManager::emit_scope_cleanup(Env &env_scope) {
     if (it->is_class) {
       auto *ptr = ctx.builder->CreateLoad(it->alloca_ty, it->alloca);
       ctx.builder->CreateCall(free_fn, {ptr});
+    } else if (it->is_str && it->list_st) {
+      auto *gp = ctx.builder->CreateStructGEP(it->list_st, it->alloca, 1u);
+      auto *data = ctx.builder->CreateLoad(ptr_ty(cc), gp);
+      if (!llvm::isa<llvm::Constant>(data))
+        ctx.builder->CreateCall(free_fn, {data});
     } else if (it->list_st) {
       auto *base = it->alloca;
       if (it->free_base_ptr)
@@ -125,10 +139,16 @@ void CleanupManager::emit_var_free(Env &env, llvm::Value *alloca) {
         auto &cc = *ctx.llvm_ctx;
         auto *free_fn =
             declare_runtime_func("free", void_ty(cc), {ptr_ty(cc)});
-        if (c.is_class) {
-          auto *ptr = ctx.builder->CreateLoad(c.alloca_ty, c.alloca);
-          ctx.builder->CreateCall(free_fn, {ptr});
-        } else if (c.list_st) {
+            if (c.is_class) {
+              auto *ptr = ctx.builder->CreateLoad(c.alloca_ty, c.alloca);
+              ctx.builder->CreateCall(free_fn, {ptr});
+            } else if (c.is_str && c.list_st) {
+              auto *gp =
+                  ctx.builder->CreateStructGEP(c.list_st, c.alloca, 1u);
+              auto *data = ctx.builder->CreateLoad(ptr_ty(cc), gp);
+              if (!llvm::isa<llvm::Constant>(data))
+                ctx.builder->CreateCall(free_fn, {data});
+            } else if (c.list_st) {
           auto *base = c.alloca;
           if (c.free_base_ptr)
             base = ctx.builder->CreateLoad(c.alloca_ty, c.alloca);
