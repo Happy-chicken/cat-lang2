@@ -18,6 +18,13 @@ private:
   enum class VarState { Free, MutBorrowed, ImmutBorrowed, Moved };
   enum class ParamClass { Copy, Move, BorrowMut, BorrowImmut };
 
+  struct VarInfo {
+    VarState state = VarState::Free;
+    string class_name;
+    bool is_struct = false;
+    bool is_cref = false;
+  };
+
   void check_function(const FunctionDef &func, error::DiagCtxt &diag);
   void check_impl_methods(const Impl &imp, error::DiagCtxt &diag);
 
@@ -43,15 +50,16 @@ private:
 
   void resolve_call_args(const CallExpr &call, error::DiagCtxt &diag);
 
+  bool is_struct_var(const string &name) const;
+  bool is_cref_var(const string &name) const;
+  string get_class_name(const string &name) const;
+
   SymbolTable *sym_table = nullptr;
   runtime::BuiltinRegistry *builtins = nullptr;
 
-  unordered_map<string, VarState> states;
+  unordered_map<string, VarInfo> states;
   unordered_map<string, int> immut_count;
-  unordered_map<string, string> borrow_map; // borrower → source
-  unordered_map<string, bool> is_struct_map; // var_name → is_struct
-  unordered_map<string, string> class_map;   // var_name → class_name
-  unordered_set<string> cref_vars;            // vars that are cref refs
+  unordered_map<string, string> borrow_map;
   vector<vector<string>> scopes;
 };
 } // namespace cat

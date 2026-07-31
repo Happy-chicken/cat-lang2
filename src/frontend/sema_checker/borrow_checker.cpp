@@ -27,27 +27,26 @@ void BorrowChecker::check_function(const FunctionDef &func,
   states.clear();
   immut_count.clear();
   borrow_map.clear();
-  is_struct_map.clear();
-  class_map.clear();
-  cref_vars.clear();
   scopes.clear();
 
   for (const auto &p : func.function_header.params) {
     bool is_struct =
         p.ty.is_struct_type() && !p.ty.is_move_type();
-    is_struct_map[p.name] = is_struct;
+    bool is_cref = std::get_if<ast::Type::CRef>(&p.ty.data) != nullptr;
+    string class_name;
     auto try_set_class = [&](const uptr<ast::Type> &inner) {
       if (inner)
         if (auto *cls = std::get_if<ast::Type::Class>(&inner->data))
-          class_map[p.name] = cls->name;
+          class_name = cls->name;
     };
     std::visit(overloaded{
-      [&](const ast::Type::Class &cls){class_map[p.name] = cls.name;},
+      [&](const ast::Type::Class &cls){class_name = cls.name;},
       [&](const ast::Type::Ref &ref){try_set_class(ref.inner);},
       [&](const ast::Type::CRef &cref){try_set_class(cref.inner);},
       [&](const ast::Type::Own &own){try_set_class(own.inner);},
       [](auto&&){},
     }, p.ty.data);
+    states[p.name] = {VarState::Free, class_name, is_struct, is_cref};
   }
 
   push_scope();
@@ -59,6 +58,25 @@ void BorrowChecker::check_impl_methods(const Impl &imp,
                                        error::DiagCtxt &diag) {
   for (const auto &method : imp.methods)
     check_function(method, diag);
+}
+
+// ── cache helpers ──
+
+bool BorrowChecker::is_struct_var(const string &name) const {
+  auto it = states.find(name);
+  return it != states.end() && it->second.is_struct;
+}
+
+bool BorrowChecker::is_cref_var(const string &name) const {
+  auto it = states.find(name);
+  return it != states.end() && it->second.is_cref;
+}
+
+string BorrowChecker::get_class_name(const string &name) const {
+  auto it = states.find(name);
+  if (it == states.end())
+    return "";
+  return it->second.class_name;
 }
 
 // ── scope helpers ──
@@ -116,33 +134,33 @@ BorrowChecker::classify_param(const ast::Type &ty) const {
 // ── state helpers ──
 
 void BorrowChecker::mark_moved(const string &name) {
-  states[name] = VarState::Moved;
+  states[name].state = VarState::Moved;
   immut_count.erase(name);
 }
 
 void BorrowChecker::mark_mut_borrowed(const string &name,
                                       const string &borrower) {
-  states[name] = VarState::MutBorrowed;
+  states[name].state = VarState::MutBorrowed;
   borrow_map[borrower] = name;
   immut_count.erase(name);
 }
 
 void BorrowChecker::mark_immut_borrowed(const string &name,
                                         const string &borrower) {
-  states[name] = VarState::ImmutBorrowed;
+  states[name].state = VarState::ImmutBorrowed;
   immut_count[name]++;
   borrow_map[borrower] = name;
 }
 
 void BorrowChecker::mark_free(const string &name) {
-  states[name] = VarState::Free;
+  states[name].state = VarState::Free;
   immut_count.erase(name);
 }
 
 BorrowChecker::VarState BorrowChecker::lookup_state(const string &name) const {
   auto it = states.find(name);
   if (it != states.end())
-    return it->second;
+    return it->second.state;
   return VarState::Free;
 }
 
@@ -173,24 +191,22 @@ void BorrowChecker::analyze_stmt(const StmtNode &stmt,
 
             if (!vds.ty.has_value()) {
               bool is_struct = false;
+              string class_name;
+              bool is_cref = false;
               if (src_var) {
-                auto it = is_struct_map.find(src_var->name);
-                is_struct = (it != is_struct_map.end() && it->second);
-                if (cref_vars.count(src_var->name))
-                  cref_vars.insert(vds.name);
-                auto ci = class_map.find(src_var->name);
-                if (ci != class_map.end())
-                  class_map[vds.name] = ci->second;
+                is_struct = is_struct_var(src_var->name);
+                is_cref = is_cref_var(src_var->name);
+                class_name = get_class_name(src_var->name);
               } else {
                 is_struct = std::holds_alternative<ListExpr>(vds.init->expr) ||
                             std::holds_alternative<CallExpr>(vds.init->expr);
                 if (is_struct && std::holds_alternative<CallExpr>(vds.init->expr)) {
                   auto &call_expr = std::get<CallExpr>(vds.init->expr);
                   if (auto *cv = std::get_if<Variable>(&call_expr.callee->expr))
-                    class_map[vds.name] = cv->name;
+                    class_name = cv->name;
                 }
               }
-              is_struct_map[vds.name] = is_struct;
+              states[vds.name] = {VarState::Free, class_name, is_struct, is_cref};
               if (src_var && is_struct)
                 mark_moved(src_var->name);
               return;
@@ -198,20 +214,23 @@ void BorrowChecker::analyze_stmt(const StmtNode &stmt,
 
             bool is_struct =
                 vds.ty->is_struct_type() && !vds.ty->is_move_type();
-            is_struct_map[vds.name] = is_struct;
+            bool is_cref = std::get_if<ast::Type::CRef>(&vds.ty->data) != nullptr;
+            string class_name;
             auto try_set_class = [&](const uptr<ast::Type> &inner) {
               if (inner)
                 if (auto *cls = std::get_if<ast::Type::Class>(&inner->data))
-                  class_map[vds.name] = cls->name;
+                  class_name = cls->name;
             };
             if (auto *cls = std::get_if<ast::Type::Class>(&vds.ty->data))
-              class_map[vds.name] = cls->name;
+              class_name = cls->name;
             if (auto *ref = std::get_if<ast::Type::Ref>(&vds.ty->data))
               try_set_class(ref->inner);
             if (auto *cref = std::get_if<ast::Type::CRef>(&vds.ty->data))
               try_set_class(cref->inner);
             if (auto *own = std::get_if<ast::Type::Own>(&vds.ty->data))
               try_set_class(own->inner);
+
+            states[vds.name] = {VarState::Free, class_name, is_struct, is_cref};
 
             if (std::get_if<ast::Type::Ref>(&vds.ty->data)) {
               if (!src_var) return;
@@ -225,7 +244,6 @@ void BorrowChecker::analyze_stmt(const StmtNode &stmt,
               }
               mark_mut_borrowed(src_var->name, vds.name);
             } else if (std::get_if<ast::Type::CRef>(&vds.ty->data)) {
-              cref_vars.insert(vds.name);
               if (!src_var) return;
               auto st = lookup_state(src_var->name);
               if (st == VarState::Moved || st == VarState::MutBorrowed) {
@@ -267,11 +285,9 @@ void BorrowChecker::analyze_stmt(const StmtNode &stmt,
 
             analyze_block(*ls.body, diag);
 
-            // After loop body: for each variable that was Moved inside the
-            // loop body, treat as Moved outside (conservative).
-            for (const auto &[name, state] : states) {
-              if (state == VarState::Moved)
-                saved_states[name] = VarState::Moved;
+            for (const auto &[name, info] : states) {
+              if (info.state == VarState::Moved)
+                saved_states[name].state = VarState::Moved;
             }
             states = std::move(saved_states);
             immut_count = std::move(saved_immut);
@@ -296,7 +312,6 @@ void BorrowChecker::analyze_if_stmt(const IfStmt &if_stmt,
   borrow_map = saved_borrow;
   analyze_block(*if_stmt.then_branch, diag);
   auto then_states = std::move(states);
-  auto then_immut = std::move(immut_count);
 
   vector<decltype(states)> elif_states_list;
   for (const auto &[cond, block] : if_stmt.elif_branch) {
@@ -315,17 +330,14 @@ void BorrowChecker::analyze_if_stmt(const IfStmt &if_stmt,
     analyze_block(*if_stmt.else_branch, diag);
   auto else_states = std::move(states);
 
-  // Merge: borrow state returns to pre-branch (all refs/crefs in branches go
-  // out of scope at branch exit). Moved: union if moved in all branches.
   states = saved_states;
   immut_count = saved_immut;
   borrow_map = saved_borrow;
 
-  unordered_set<string> all_branches;
-  auto collect_moved = [&](const unordered_map<string, VarState> &branch) {
+  auto collect_moved = [&](const unordered_map<string, VarInfo> &branch) {
     unordered_set<string> m;
-    for (const auto &[name, st] : branch)
-      if (st == VarState::Moved)
+    for (const auto &[name, info] : branch)
+      if (info.state == VarState::Moved)
         m.insert(name);
     return m;
   };
@@ -354,7 +366,7 @@ void BorrowChecker::analyze_if_stmt(const IfStmt &if_stmt,
   }
 
   for (const auto &name : merged)
-    states[name] = VarState::Moved;
+    states[name].state = VarState::Moved;
 }
 
 // ── expression checking ──
@@ -379,7 +391,7 @@ void BorrowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag,
                     .emit_to(diag);
                 return;
               }
-              if (cref_vars.count(v.name)) {
+              if (is_cref_var(v.name)) {
                 diag.error(expr.span, "Cannot write to cref reference '" +
                                           v.name + "'")
                     .emit_to(diag);
@@ -405,8 +417,7 @@ void BorrowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag,
 
             if (auto *rhs_var = std::get_if<Variable>(&a.value->expr)) {
               if (lookup_state(rhs_var->name) == VarState::Free) {
-                auto it = is_struct_map.find(rhs_var->name);
-                if (it != is_struct_map.end() && it->second)
+                if (is_struct_var(rhs_var->name))
                   mark_moved(rhs_var->name);
               }
             }
@@ -420,7 +431,7 @@ void BorrowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag,
             check_expr(*m.object, diag);
             if (is_write_target)
               if (auto *v = std::get_if<Variable>(&m.object->expr))
-                if (cref_vars.count(v->name))
+                if (is_cref_var(v->name))
                   diag.error(expr.span, "Cannot write through cref reference '" +
                                             v->name + "'")
                       .emit_to(diag);
@@ -430,7 +441,7 @@ void BorrowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag,
             check_expr(*i.index, diag);
             if (is_write_target)
               if (auto *v = std::get_if<Variable>(&i.object->expr))
-                if (cref_vars.count(v->name))
+                if (is_cref_var(v->name))
                   diag.error(expr.span, "Cannot write through cref reference '" +
                                             v->name + "'")
                       .emit_to(diag);
@@ -445,17 +456,11 @@ void BorrowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag,
               auto saved_immut = immut_count;
               auto saved_borrow = borrow_map;
               auto saved_scopes = scopes;
-              auto saved_cref = std::move(cref_vars);
-              auto saved_struct = std::move(is_struct_map);
-              auto saved_class = std::move(class_map);
 
               states.clear();
               immut_count.clear();
               borrow_map.clear();
               scopes.clear();
-              cref_vars.clear();
-              is_struct_map.clear();
-              class_map.clear();
               push_scope();
 
               analyze_block(*f.body, diag);
@@ -465,9 +470,6 @@ void BorrowChecker::check_expr(const ExprNode &expr, error::DiagCtxt &diag,
               immut_count = std::move(saved_immut);
               borrow_map = std::move(saved_borrow);
               scopes = std::move(saved_scopes);
-              cref_vars = std::move(saved_cref);
-              is_struct_map = std::move(saved_struct);
-              class_map = std::move(saved_class);
             }
           },
           [&](const auto &) {},
@@ -522,9 +524,9 @@ void BorrowChecker::resolve_call_args(const CallExpr &call,
     if (std::holds_alternative<MemberExpr>(call.callee->expr)) {
       auto &member = std::get<MemberExpr>(call.callee->expr);
       if (auto *obj_var = std::get_if<Variable>(&member.object->expr)) {
-        auto it = class_map.find(obj_var->name);
-        if (it != class_map.end()) {
-          string mangled = it->second + "_" + member.field;
+        string cls = get_class_name(obj_var->name);
+        if (!cls.empty()) {
+          string mangled = cls + "_" + member.field;
           fn_sym = sym_table->resolve(mangled);
         }
       }
@@ -533,8 +535,7 @@ void BorrowChecker::resolve_call_args(const CallExpr &call,
       if (std::holds_alternative<MemberExpr>(call.callee->expr)) {
         auto &member = std::get<MemberExpr>(call.callee->expr);
         if (auto *obj_var = std::get_if<Variable>(&member.object->expr)) {
-          auto si = is_struct_map.find(obj_var->name);
-          if (si != is_struct_map.end() && si->second) {
+          if (is_struct_var(obj_var->name)) {
             for (auto tag : {runtime::LIST_TAG, runtime::STR_TAG}) {
               if (builtins->is_method_declared(tag, member.field)) {
                 auto desc = builtins->lookup(tag, member.field);

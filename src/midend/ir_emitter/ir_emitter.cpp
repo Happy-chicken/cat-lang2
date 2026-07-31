@@ -817,9 +817,7 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
       kind = BorrowKind::CRef;
     else if (std::get_if<ast::Type::Own>(&s.ty->data))
       kind = BorrowKind::Own;
-    else if (std::get_if<ast::Type::Class>(&s.ty->data) ||
-             std::get_if<ast::Type::List>(&s.ty->data) ||
-             std::get_if<ast::Type::Str>(&s.ty->data))
+    else if (s.ty->is_struct_type())
       kind = BorrowKind::Own;
   }
 
