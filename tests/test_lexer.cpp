@@ -144,10 +144,10 @@ TEST(Lexer, LogicOperators) {
     EXPECT_EQ(kinds[1], TokenKind::Or);
 }
 
-TEST(Lexer, ClassKeywords) {
-    auto kinds = tokenize_kinds("class trait impl self super ref own ptr list");
+TEST(Lexer, StructKeywords) {
+    auto kinds = tokenize_kinds("struct trait impl self super ref own ptr list");
     ASSERT_GE(kinds.size(), 9u);
-    EXPECT_EQ(kinds[0], TokenKind::Class);
+    EXPECT_EQ(kinds[0], TokenKind::Struct);
     EXPECT_EQ(kinds[1], TokenKind::Trait);
     EXPECT_EQ(kinds[2], TokenKind::Impl);
     EXPECT_EQ(kinds[3], TokenKind::Sself);

@@ -29,7 +29,7 @@ struct LoopInfo {
   llvm::BasicBlock *exit_bb;
 };
 
-struct ClassInfo {
+struct StructInfo {
   llvm::StructType *struct_ty = nullptr;
   vector<string> field_names;
   vector<ast::Type> field_types;
@@ -37,11 +37,11 @@ struct ClassInfo {
   vector<optional<const ExprNode *>> field_defaults;
   llvm::StringMap<string> methods;
 
-  ClassInfo() = default;
-  ClassInfo(const ClassInfo &) = delete;
-  ClassInfo &operator=(const ClassInfo &) = delete;
-  ClassInfo(ClassInfo &&) = default;
-  ClassInfo &operator=(ClassInfo &&) = default;
+  StructInfo() = default;
+  StructInfo(const StructInfo &) = delete;
+  StructInfo &operator=(const StructInfo &) = delete;
+  StructInfo(StructInfo &&) = default;
+  StructInfo &operator=(StructInfo &&) = default;
 };
 
 struct ListType {
@@ -57,7 +57,7 @@ struct CodeGenCtxt {
   uptr<llvm::LLVMContext> llvm_ctx;
   uptr<llvm::IRBuilder<>> builder;
   uptr<llvm::Module> module;
-  llvm::StringMap<uptr<ClassInfo>> class_registry;
+  llvm::StringMap<uptr<StructInfo>> struct_registry;
   llvm::StringMap<uptr<ListType>> list_types;
   uptr<StrType> str_type;
   uint32_t str_counter = 0;

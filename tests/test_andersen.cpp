@@ -122,9 +122,9 @@ TEST_F(AndersenFixture, SwapRefParams) {
   EXPECT_GE(nonempty, 2u) << "swap should have at least 2 nodes with points-to information";
 }
 
-TEST_F(AndersenFixture, ClassFieldStore) {
+TEST_F(AndersenFixture, StructFieldStore) {
   compile(R"(
-    class Node {
+    struct Node {
       let val: int = 0;
       let next: int = 0;
     }

@@ -39,8 +39,8 @@ Type Type::clone() const {
           StructType cloned = std::visit(
             [](const auto &innner) -> StructType {
               using InnerT = std::decay_t<decltype(innner)>;
-              if constexpr (std::is_same_v<InnerT, StructType::Class>) {
-                return StructType(StructType::Class{innner.name});
+              if constexpr (std::is_same_v<InnerT, StructType::Struct>) {
+                return StructType(StructType::Struct{innner.name});
               } else if constexpr (std::is_same_v<InnerT, StructType::TraitObject>) {
                 return StructType(StructType::TraitObject{innner.name});
               } else if constexpr (std::is_same_v<InnerT, StructType::Str>) {
@@ -162,7 +162,7 @@ string Type::to_string() const {
           return std::visit(overloaded{
             [](const StructType::Str &) { return string("str"); },
             [](const StructType::List &l) { return "list<" + (l.inner ? l.inner->to_string() : "?") + ">"; },
-            [](const StructType::Class &c) { return c.name; },
+            [](const StructType::Struct &c) { return c.name; },
             [](const StructType::TraitObject &t) { return "dyn " + t.name; }
           }, v.get_data());
         } else {

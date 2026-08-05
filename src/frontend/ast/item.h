@@ -28,7 +28,7 @@ struct FunctionDef {
   Block body;
 };
 
-struct Class {
+struct Struct {
   std::string name;
   std::vector<Field> fields;
 };
@@ -40,12 +40,12 @@ struct Trait {
 
 struct Impl {
   std::optional<std::string> trait_name;
-  std::string class_name;
+  std::string struct_name;
   std::vector<FunctionDef> methods;
 };
 
 using Item =
-    std::variant<FunctionDef, FunctionDecl, Class, Trait, Impl, GlobalVar>;
+    std::variant<FunctionDef, FunctionDecl, Struct, Trait, Impl, GlobalVar>;
 
 struct ItemNode {
   Span span;
@@ -64,8 +64,8 @@ inline Item make_function_decl(FunctionDecl header) {
   return Item{std::move(header)};
 }
 
-inline Item make_class(std::string name, std::vector<Field> fields) {
-  return Item{Class{std::move(name), std::move(fields)}};
+inline Item make_struct(std::string name, std::vector<Field> fields) {
+  return Item{Struct{std::move(name), std::move(fields)}};
 }
 
 inline Item make_trait(std::string name, std::vector<FunctionDecl> methods) {
@@ -73,10 +73,10 @@ inline Item make_trait(std::string name, std::vector<FunctionDecl> methods) {
 }
 
 inline Item make_impl(std::optional<std::string> trait_name,
-                      std::string class_name,
+                      std::string struct_name,
                       std::vector<FunctionDef> methods) {
   return Item{
-      Impl{std::move(trait_name), std::move(class_name), std::move(methods)}};
+      Impl{std::move(trait_name), std::move(struct_name), std::move(methods)}};
 }
 
 inline Item make_global_var(std::string name,

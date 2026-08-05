@@ -44,7 +44,7 @@ struct Type {
     uptr<Type> ret;
   };
 
-  struct Class {
+  struct Struct {
     string name;
   };
 
@@ -53,7 +53,7 @@ struct Type {
   };
 
   using Variant = std::variant<Int, Float, Bool, Char, Str, Void, Ptr, Ref, CRef, Own,
-                               List, Func, Class, TraitObject>;
+                               List, Func, Struct, TraitObject>;
 
   Variant data;
 
@@ -71,7 +71,7 @@ struct Type {
   inline bool is_struct_type() const {
     return std::get_if<ast::Type::List>(&data) || 
            std::get_if<ast::Type::Str>(&data) || 
-           std::get_if<ast::Type::Class>(&data) ||
+           std::get_if<ast::Type::Struct>(&data) ||
            std::get_if<ast::Type::TraitObject>(&data);
   }
 
@@ -112,7 +112,7 @@ struct Type {
               if (!a.ret || !b.ret)
                 return false;
               return *a.ret == *b.ret;
-            } else if constexpr (std::is_same_v<T, Class> || std::is_same_v<T, TraitObject>) {
+            } else if constexpr (std::is_same_v<T, Struct> || std::is_same_v<T, TraitObject>) {
               return a.name == b.name;
             } else {
               return true;
@@ -163,8 +163,8 @@ struct Type {
                 v.ret ? std::make_unique<Type>(v.ret->clone()) : nullptr;
 
             return Type(Func{std::move(cloned_params), std::move(cloned_ret)});
-          } else if constexpr (std::is_same_v<T, Class>) {
-            return Type(Class{v.name});
+          } else if constexpr (std::is_same_v<T, Struct>) {
+            return Type(Struct{v.name});
           } else if constexpr (std::is_same_v<T, TraitObject>) {
             return Type(TraitObject{v.name});
           } else {
@@ -210,7 +210,7 @@ struct Type {
             result += ") -> ";
             result += v.ret ? v.ret->to_string() : "?";
             return result;
-          } else if constexpr (std::is_same_v<T, Type::Class> || 
+          } else if constexpr (std::is_same_v<T, Type::Struct> || 
                                std::is_same_v<T, Type::TraitObject>) {
             return v.name;
           } else {
@@ -248,8 +248,8 @@ inline Type type_list(Type inner) {
   return Type(Type::List{std::make_unique<Type>(std::move(inner))});
 }
 
-inline Type type_class(std::string name) {
-  return Type(Type::Class{std::move(name)});
+inline Type type_struct(std::string name) {
+  return Type(Type::Struct{std::move(name)});
 }
 
 inline Type type_trait(std::string name) {
@@ -279,7 +279,7 @@ inline Type type_func(vector<uptr<Type>> params, uptr<Type> ret) {
 //               seed ^= std::hash<cat::Type>{}(*v.inner) + 0x9e3779b9 +
 //                       (seed << 6) + (seed >> 2);
 //             }
-//           } else if constexpr (std::is_same_v<T, cat::Type::Class>) {
+//           } else if constexpr (std::is_same_v<T, cat::Type::Struct>) {
 //             seed ^= std::hash<std::string>{}(v.name) + 0x9e3779b9 +
 //                     (seed << 6) + (seed >> 2);
 //           }

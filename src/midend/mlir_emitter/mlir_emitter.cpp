@@ -56,7 +56,7 @@ mlir::Type MlirEmitter::mlir_type(const ast::Type &ast_type) {
           [&](const ast::Type::CRef &) { return i32_ty(ctx->mlir_ctx); },
           [&](const ast::Type::Own &) { return i32_ty(ctx->mlir_ctx); },
           [&](const ast::Type::List &) { return i32_ty(ctx->mlir_ctx); },
-          [&](const ast::Type::Class &) { return i32_ty(ctx->mlir_ctx); },
+          [&](const ast::Type::Struct &) { return i32_ty(ctx->mlir_ctx); },
           [&](const ast::Type::TraitObject &) { return i32_ty(ctx->mlir_ctx); },
           [&](const ast::Type::Void &) -> mlir::Type { return {}; },
           [&](const ast::Type::Str &) { return i32_ty(ctx->mlir_ctx); },

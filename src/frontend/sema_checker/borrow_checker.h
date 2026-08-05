@@ -16,13 +16,14 @@ public:
 
 private:
   enum class VarState { Free, MutBorrowed, ImmutBorrowed, Moved };
-  enum class ParamClass { Copy, Move, BorrowMut, BorrowImmut };
+  enum class ParamKind { Copy, Move, BorrowMut, BorrowImmut };
 
   struct VarInfo {
     VarState state = VarState::Free;
-    string class_name;
+    string struct_name;
     bool is_struct = false;
     bool is_cref = false;
+    int immut_count = 0;
   };
 
   void check_function(const FunctionDef &func, error::DiagCtxt &diag);
@@ -35,11 +36,9 @@ private:
                   bool is_write_target = false);
   void check_var_write(const ExprNode &expr, error::DiagCtxt &diag);
 
-  void push_scope();
-  void pop_scope();
   void release_borrow(const string &borrower);
 
-  ParamClass classify_param(const ast::Type &ty) const;
+  ParamKind classify_param(const ast::Type &ty) const;
 
   void mark_moved(const string &name);
   void mark_mut_borrowed(const string &name, const string &borrower);
@@ -52,14 +51,16 @@ private:
 
   bool is_struct_var(const string &name) const;
   bool is_cref_var(const string &name) const;
-  string get_class_name(const string &name) const;
+  string get_struct_name(const string &name) const;
 
   SymbolTable *sym_table = nullptr;
   runtime::BuiltinRegistry *builtins = nullptr;
 
+  // per-variable borrow state (name → VarInfo)
   unordered_map<string, VarInfo> states;
-  unordered_map<string, int> immut_count;
+  // borrower name → source variable it borrows from
   unordered_map<string, string> borrow_map;
-  vector<vector<string>> scopes;
+  // indexed by scope depth; variables registered in that scope (released on exit)
+  vector<vector<string>> scope_vars;
 };
 } // namespace cat

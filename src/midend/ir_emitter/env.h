@@ -48,10 +48,10 @@ struct Env {
     return std::nullopt;
   }
 
-  void add_cleanup(llvm::Value *a, llvm::Type *aty, bool is_class,
+  void add_cleanup(llvm::Value *a, llvm::Type *aty, bool is_struct,
                    llvm::StructType *list_st = nullptr,
                    bool free_base_ptr = false) {
-    cleanups.push_back({a, aty, is_class, list_st, false, free_base_ptr});
+    cleanups.push_back({a, aty, is_struct, list_st, false, free_base_ptr});
   }
 
   bool cancel_cleanup(llvm::Value *a) {

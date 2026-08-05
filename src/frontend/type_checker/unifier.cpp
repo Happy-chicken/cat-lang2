@@ -102,8 +102,8 @@ error::UnifyResult<semantics::Type> Unifier::unify(const Type &t1,
                         return error::UnifyError{error::Mismatch{a.clone(), b.clone()}};
                     return Type::list(std::move(std::get<Type>(inner)));
                   },
-                  [&](const Type::StructType::Class &ca,
-                    const Type::StructType::Class &cb)
+                  [&](const Type::StructType::Struct &ca,
+                    const Type::StructType::Struct &cb)
                     -> error::UnifyResult<semantics::Type> {
                     if (ca.name == cb.name)
                         return a.clone();

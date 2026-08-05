@@ -75,7 +75,7 @@ private:
   error::ParseResult<Trait> parse_trait();
   error::ParseResult<Impl> parse_impl();
   error::ParseResult<Field> parse_field();
-  error::ParseResult<Class> parse_class();
+  error::ParseResult<Struct> parse_struct();
   error::ParseResult<GlobalVar> parse_global_var();
 
   error::ParseResult<std::vector<uptr<ExprNode>>> parse_arguments();

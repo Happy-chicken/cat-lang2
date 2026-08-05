@@ -1,7 +1,7 @@
 #pragma once
 #include "inferer.h"
-#include "pass_interface.h"
 #include "item.h"
+#include "pass_interface.h"
 #include <variant>
 
 namespace cat::semantics {
@@ -26,7 +26,7 @@ public:
               [&](GlobalVar &gv) {
                 check_global_var(gv, item_node.span, ctx, diag);
               },
-              [&](Class &cls) { check_class_defaults(cls, ctx, diag); },
+              [&](Struct &strukt) { check_struct_defaults(strukt, ctx, diag); },
               [&](const auto &) {},
           },
           item_node.item);
@@ -53,8 +53,8 @@ private:
                                error::DiagCtxt &diag);
   void check_global_var(const GlobalVar &gv, Span span, SemaCtxt &ctx,
                         error::DiagCtxt &diag);
-  void check_class_defaults(const Class &cls, SemaCtxt &ctx,
-                            error::DiagCtxt &diag);
+  void check_struct_defaults(const Struct &strukt, SemaCtxt &ctx,
+                             error::DiagCtxt &diag);
 };
 
 } // namespace cat::semantics

@@ -103,11 +103,11 @@ let t2:int = s[0];
 
 ```
 
-### class
+### struct
 
 
 ```python
-class Point {
+struct Point {
     let x:int;
     let y:int;
 }
@@ -132,7 +132,7 @@ impl Point {
     }
 }
 
-class Circle {
+struct Circle {
     let center:Point;
     let radius:int;
 }

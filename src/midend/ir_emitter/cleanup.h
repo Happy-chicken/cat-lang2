@@ -17,14 +17,14 @@ struct Env;
 struct CleanupInfo {
   llvm::Value *alloca;
   llvm::Type *alloca_ty;
-  bool is_class;
+  bool is_struct;
   llvm::StructType *list_st;
   bool cancelled = false;
   bool free_base_ptr = false;
   bool is_str = false;
 };
 
-enum class CleanupKind : uint8_t { None, ClassFree, ListDataFree, OwnListFree, StrDataFree };
+enum class CleanupKind : uint8_t { None, StructFree, ListDataFree, OwnListFree, StrDataFree };
 
 class CleanupManager {
 public:
@@ -32,7 +32,7 @@ public:
 
   static CleanupKind classify_type(const ast::Type &ty);
 
-  void register_class_cleanup(Env &env, llvm::Value *alloca,
+  void register_struct_cleanup(Env &env, llvm::Value *alloca,
                               llvm::Type *alloca_ty);
   void register_list_cleanup(Env &env, llvm::Value *alloca,
                              llvm::Type *alloca_ty,

@@ -68,8 +68,8 @@ StrType *IrEmitter::get_str_type() {
 IrEmitter::IrEmitter(const string &name, error::DiagCtxt &diag,
                      semantics::SemaCtxt &sema_ctx)
     : ctx(std::make_unique<CodeGenCtxt>(name)), env(std::make_shared<Env>()),
-      cleanup_mgr(*ctx), diag(diag), current_function(nullptr),
-      sema(sema_ctx) {}
+      cleanup_mgr(*ctx), diag(diag), current_function(nullptr), sema(sema_ctx) {
+}
 
 // ── type helpers ──
 
@@ -104,7 +104,7 @@ llvm::Type *IrEmitter::llvm_type(const ast::Type &ast_type) {
           auto et = llvm_type(*v.inner);
           return lookup_or_create_list_type(et)->struct_ty;
         }
-        if constexpr (std::is_same_v<T, ast::Type::Class>) {
+        if constexpr (std::is_same_v<T, ast::Type::Struct>) {
           return ptr_ty(c);
         }
         if constexpr (std::is_same_v<T, ast::Type::Func>) {
@@ -169,8 +169,7 @@ vector<llvm::Type *> IrEmitter::ptr_deref_chain(const ast::Type &ast_type) {
   return chain;
 }
 
-IrEmitter::ParamTypeInfo
-IrEmitter::resolve_param_type(const ast::Type &ty) {
+IrEmitter::ParamTypeInfo IrEmitter::resolve_param_type(const ast::Type &ty) {
   auto &c = *ctx->llvm_ctx;
   ParamTypeInfo info{};
 
@@ -274,8 +273,8 @@ llvm::Function *IrEmitter::declare_runtime_func(const string &fn_name,
 // ── top-level ──
 
 void IrEmitter::compile(const Program &program) {
-  build_classes(program);
-  build_class_constructors();
+  build_structs(program);
+  build_struct_constructors();
 
   for (auto &item : program.items)
     std::visit(
@@ -283,7 +282,7 @@ void IrEmitter::compile(const Program &program) {
             [&](const FunctionDef &f) { compile_function(f, item.span); },
             [&](const Impl &i) {
               for (auto &m : i.methods)
-                compile_method(i.class_name, m, item.span);
+                compile_method(i.struct_name, m, item.span);
             },
             [&](const GlobalVar &v) { compile_global_var(v, item.span); },
             [](const auto &) {},
@@ -291,34 +290,34 @@ void IrEmitter::compile(const Program &program) {
         item.item);
 }
 
-// ── class registration ──
+// ── struct registration ──
 
-void IrEmitter::build_classes(const Program &program) {
+void IrEmitter::build_structs(const Program &program) {
   auto &c = *ctx->llvm_ctx;
 
   for (auto &item : program.items) {
-    auto *cls = std::get_if<Class>(&item.item);
-    if (!cls)
+    auto *strukt = std::get_if<Struct>(&item.item);
+    if (!strukt)
       continue;
-    auto info = std::make_unique<ClassInfo>();
-    info->struct_ty = llvm::StructType::create(c, cls->name);
-    for (size_t i = 0; i < cls->fields.size(); ++i) {
-      auto &f = cls->fields[i];
+    auto info = std::make_unique<StructInfo>();
+    info->struct_ty = llvm::StructType::create(c, strukt->name);
+    for (size_t i = 0; i < strukt->fields.size(); ++i) {
+      auto &f = strukt->fields[i];
       info->field_names.push_back(f.name);
       info->field_types.push_back(f.ty.clone());
       info->field_indices[f.name] = static_cast<uint32_t>(i);
       info->field_defaults.push_back(
           f.init ? optional<const ExprNode *>(&*f.init) : std::nullopt);
     }
-    ctx->class_registry[cls->name] = std::move(info);
+    ctx->struct_registry[strukt->name] = std::move(info);
   }
 
   for (auto &item : program.items) {
-    auto *cls = std::get_if<Class>(&item.item);
-    if (!cls)
+    auto *strukt = std::get_if<Struct>(&item.item);
+    if (!strukt)
       continue;
-    auto it = ctx->class_registry.find(cls->name);
-    if (it == ctx->class_registry.end())
+    auto it = ctx->struct_registry.find(strukt->name);
+    if (it == ctx->struct_registry.end())
       continue;
     vector<llvm::Type *> fields;
     for (auto &t : it->second->field_types)
@@ -330,29 +329,29 @@ void IrEmitter::build_classes(const Program &program) {
     auto *imp = std::get_if<Impl>(&item.item);
     if (!imp)
       continue;
-    auto it = ctx->class_registry.find(imp->class_name);
-    if (it == ctx->class_registry.end())
+    auto it = ctx->struct_registry.find(imp->struct_name);
+    if (it == ctx->struct_registry.end())
       continue;
-    string prefix = imp->class_name + "_";
+    string prefix = imp->struct_name + "_";
     for (auto &m : imp->methods)
       it->second->methods[m.function_header.name] =
           prefix + m.function_header.name;
   }
 }
 
-void IrEmitter::build_class_constructors() {
-  for (auto &kv : ctx->class_registry) {
+void IrEmitter::build_struct_constructors() {
+  for (auto &kv : ctx->struct_registry) {
     string name = kv.first().str();
-    compile_class_constructor(name, kv.second->struct_ty, *kv.second);
-    compile_class_clone(name, kv.second->struct_ty, *kv.second);
+    compile_struct_constructor(name, kv.second->struct_ty, *kv.second);
+    compile_struct_clone(name, kv.second->struct_ty, *kv.second);
     if (!kv.second->methods.count("clone"))
       kv.second->methods["clone"] = name + "_clone";
   }
 }
 
-void IrEmitter::compile_class_constructor(const string &name,
+void IrEmitter::compile_struct_constructor(const string &name,
                                           llvm::StructType *st,
-                                          const ClassInfo &info) {
+                                          const StructInfo &info) {
   auto fn_name = name + "_ctor";
   if (ctx->module->getFunction(fn_name))
     return;
@@ -381,8 +380,8 @@ void IrEmitter::compile_class_constructor(const string &name,
   ctx->builder->CreateRet(instance);
 }
 
-void IrEmitter::compile_class_clone(const string &name, llvm::StructType *st,
-                                    const ClassInfo &info) {
+void IrEmitter::compile_struct_clone(const string &name, llvm::StructType *st,
+                                    const StructInfo &info) {
   auto fn_name = name + "_clone";
   if (ctx->module->getFunction(fn_name))
     return;
@@ -413,15 +412,16 @@ void IrEmitter::compile_class_clone(const string &name, llvm::StructType *st,
                     : i32(c);
       auto *lst = lookup_or_create_list_type(et)->struct_ty;
 
-      auto *len_val = ctx->builder->CreateLoad(i64(c),
-                                               ctx->builder->CreateStructGEP(lst, src_fp, 0));
-      auto *old_data = ctx->builder->CreateLoad(ptr_ty(c),
-                                                ctx->builder->CreateStructGEP(lst, src_fp, 2));
+      auto *len_val = ctx->builder->CreateLoad(
+          i64(c), ctx->builder->CreateStructGEP(lst, src_fp, 0));
+      auto *old_data = ctx->builder->CreateLoad(
+          ptr_ty(c), ctx->builder->CreateStructGEP(lst, src_fp, 2));
 
       auto *elem_sz = llvm::ConstantExpr::getTruncOrBitCast(
           llvm::ConstantExpr::getSizeOf(et), i64(c));
       auto *total = ctx->builder->CreateMul(len_val, elem_sz);
-      auto *new_data = ctx->builder->CreateCall(malloc_fn, {total}, "list.clone");
+      auto *new_data =
+          ctx->builder->CreateCall(malloc_fn, {total}, "list.clone");
       auto *memcpy_fn = declare_runtime_func("memcpy", ptr_ty(c),
                                              {ptr_ty(c), ptr_ty(c), i64(c)});
       ctx->builder->CreateCall(memcpy_fn, {new_data, old_data, total});
@@ -433,16 +433,16 @@ void IrEmitter::compile_class_clone(const string &name, llvm::StructType *st,
                                 ctx->builder->CreateStructGEP(lst, dest_fp, 1));
       ctx->builder->CreateStore(new_data,
                                 ctx->builder->CreateStructGEP(lst, dest_fp, 2));
-    } else if (std::get_if<ast::Type::Class>(&info.field_types[i].data)) {
-      auto &cls_name = std::get<ast::Type::Class>(info.field_types[i].data).name;
-      auto clone_fn_name = cls_name + "_clone";
+    } else if (std::get_if<ast::Type::Struct>(&info.field_types[i].data)) {
+      auto &struct_name =
+          std::get<ast::Type::Struct>(info.field_types[i].data).name;
+      auto clone_fn_name = struct_name + "_clone";
       auto *clone_fn = ctx->module->getFunction(clone_fn_name);
       if (!clone_fn)
         clone_fn = llvm::Function::Create(
             llvm::FunctionType::get(ptr_ty(c), {ptr_ty(c)}, false),
             llvm::Function::ExternalLinkage, clone_fn_name, ctx->module.get());
-      auto *src_cls =
-          ctx->builder->CreateLoad(field_tys[i], src_fp);
+      auto *src_cls = ctx->builder->CreateLoad(field_tys[i], src_fp);
       auto *cloned_cls = ctx->builder->CreateCall(clone_fn, {src_cls});
       auto *dest_fp = ctx->builder->CreateStructGEP(st, new_obj, idx);
       ctx->builder->CreateStore(cloned_cls, dest_fp);
@@ -501,9 +501,9 @@ void IrEmitter::compile_function(const FunctionDef &func, Span span) {
   compile_named_function(func, func.function_header.name, span);
 }
 
-void IrEmitter::compile_method(const string &cls, const FunctionDef &func,
+void IrEmitter::compile_method(const string &strukt, const FunctionDef &func,
                                Span span) {
-  compile_named_function(func, cls + "_" + func.function_header.name, span);
+  compile_named_function(func, strukt + "_" + func.function_header.name, span);
 }
 
 void IrEmitter::compile_named_function(const FunctionDef &func,
@@ -534,14 +534,13 @@ void IrEmitter::compile_named_function(const FunctionDef &func,
 
     auto info = resolve_param_type(p.ty);
     env->declare_var(p.name, a, info.param_ty, info.value_ty, info.borrow_kind,
-                     ptr_deref_chain(p.ty),
-                     llvm_func_type(p.ty));
+                     ptr_deref_chain(p.ty), llvm_func_type(p.ty));
 
     if (info.borrow_kind == BorrowKind::None ||
         info.borrow_kind == BorrowKind::Own) {
       auto kind = CleanupManager::classify_type(p.ty);
-      if (kind == CleanupKind::ClassFree)
-        cleanup_mgr.register_class_cleanup(*env, a, info.param_ty);
+      if (kind == CleanupKind::StructFree)
+        cleanup_mgr.register_struct_cleanup(*env, a, info.param_ty);
       else if (kind == CleanupKind::ListDataFree) {
         auto *st = llvm::cast<llvm::StructType>(info.param_ty);
         cleanup_mgr.register_list_cleanup(*env, a, info.param_ty, st);
@@ -637,8 +636,7 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
 
     auto info = resolve_param_type(p.ty);
     env->declare_var(p.name, a, info.param_ty, info.value_ty, info.borrow_kind,
-                     ptr_deref_chain(p.ty),
-                     llvm_func_type(p.ty));
+                     ptr_deref_chain(p.ty), llvm_func_type(p.ty));
     ++i;
   }
 
@@ -666,9 +664,9 @@ llvm::Value *IrEmitter::compile_lambda(const LambdaExpr &lambda) {
   return fn;
 }
 
-void IrEmitter::collect_free_vars(
-    const StmtNode &stmt, const unordered_set<string> &params,
-    unordered_set<string> &captured) {
+void IrEmitter::collect_free_vars(const StmtNode &stmt,
+                                  const unordered_set<string> &params,
+                                  unordered_set<string> &captured) {
   std::visit(overloaded{
                  [&](const VarDefStmt &s) {
                    if (s.init)
@@ -709,9 +707,9 @@ void IrEmitter::collect_free_vars(
              stmt.stmt);
 }
 
-void IrEmitter::collect_free_vars_expr(
-    const ExprNode &expr, const unordered_set<string> &params,
-    unordered_set<string> &captured) {
+void IrEmitter::collect_free_vars_expr(const ExprNode &expr,
+                                       const unordered_set<string> &params,
+                                       unordered_set<string> &captured) {
   std::visit(overloaded{
                  [&](const Variable &v) {
                    if (params.find(v.name) == params.end())
@@ -761,49 +759,48 @@ void IrEmitter::compile_block(const Block &block) {
 }
 
 void IrEmitter::compile_stmt(const StmtNode &sn) {
-  std::visit(
-      overloaded{
-          [&](const VarDefStmt &s) { compile_var_def(s); },
-          [&](const IfStmt &s) { compile_if(s); },
-          [&](const LoopStmt &s) { compile_while(s); },
-          [&](const ExprStmt &s) { (void)compile_expr(s.expr); },
-          [&](const ReturnStmt &s) {
-            llvm::Value *ret_val = nullptr;
-            if (s.expr) {
-              ret_val = compile_expr(*s.expr);
-              if (!ret_val)
-                return;
-              if (auto *var = std::get_if<Variable>(&s.expr->expr)) {
-                auto vi = env->lookup_var(var->name);
-                if (vi.ptr && vi.borrow_kind == BorrowKind::Own)
-                  cleanup_mgr.cancel_cleanup(*env, vi.ptr);
-              }
-            }
-            cleanup_mgr.emit_all_cleanups(*env);
-            if (s.expr)
-              ctx->builder->CreateRet(ret_val);
-            else
-              ctx->builder->CreateRetVoid();
-          },
-          [&](const BreakStmt &) {
-            if (auto lp = env->lookup_loop()) {
-              cleanup_mgr.emit_until_loop(*env);
-              ctx->builder->CreateBr(lp->exit_bb);
-            }
-          },
-          [&](const ContinueStmt &) {
-            if (auto lp = env->lookup_loop()) {
-              cleanup_mgr.emit_until_loop(*env);
-              ctx->builder->CreateBr(lp->cond_bb);
-            }
-          },
-          [&](const BlockStmt &s) {
-            EnvGuard g(*this, std::make_shared<Env>(env));
-            compile_block(*s.block);
-            cleanup_mgr.emit_scope_cleanup(*env);
-          },
-      },
-      sn.stmt);
+  std::visit(overloaded{
+                 [&](const VarDefStmt &s) { compile_var_def(s); },
+                 [&](const IfStmt &s) { compile_if(s); },
+                 [&](const LoopStmt &s) { compile_while(s); },
+                 [&](const ExprStmt &s) { (void)compile_expr(s.expr); },
+                 [&](const ReturnStmt &s) {
+                   llvm::Value *ret_val = nullptr;
+                   if (s.expr) {
+                     ret_val = compile_expr(*s.expr);
+                     if (!ret_val)
+                       return;
+                     if (auto *var = std::get_if<Variable>(&s.expr->expr)) {
+                       auto vi = env->lookup_var(var->name);
+                       if (vi.ptr && vi.borrow_kind == BorrowKind::Own)
+                         cleanup_mgr.cancel_cleanup(*env, vi.ptr);
+                     }
+                   }
+                   cleanup_mgr.emit_all_cleanups(*env);
+                   if (s.expr)
+                     ctx->builder->CreateRet(ret_val);
+                   else
+                     ctx->builder->CreateRetVoid();
+                 },
+                 [&](const BreakStmt &) {
+                   if (auto lp = env->lookup_loop()) {
+                     cleanup_mgr.emit_until_loop(*env);
+                     ctx->builder->CreateBr(lp->exit_bb);
+                   }
+                 },
+                 [&](const ContinueStmt &) {
+                   if (auto lp = env->lookup_loop()) {
+                     cleanup_mgr.emit_until_loop(*env);
+                     ctx->builder->CreateBr(lp->cond_bb);
+                   }
+                 },
+                 [&](const BlockStmt &s) {
+                   EnvGuard g(*this, std::make_shared<Env>(env));
+                   compile_block(*s.block);
+                   cleanup_mgr.emit_scope_cleanup(*env);
+                 },
+             },
+             sn.stmt);
 }
 
 void IrEmitter::compile_var_def(const VarDefStmt &s) {
@@ -842,10 +839,9 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
     }
   }
 
-  llvm::Type *alloca_ty =
-      init_val   ? init_val->getType()
-      : s.ty     ? llvm_type(*s.ty)
-                 : i32(c);
+  llvm::Type *alloca_ty = init_val ? init_val->getType()
+                          : s.ty   ? llvm_type(*s.ty)
+                                   : i32(c);
   if (llvm::isa<llvm::FunctionType>(alloca_ty))
     alloca_ty = llvm::PointerType::get(alloca_ty, 0);
 
@@ -888,8 +884,8 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
   if (s.ty && kind != BorrowKind::Ref && kind != BorrowKind::CRef) {
     auto ckind = CleanupManager::classify_type(*s.ty);
     switch (ckind) {
-    case CleanupKind::ClassFree:
-      cleanup_mgr.register_class_cleanup(*env, a, alloca_ty);
+    case CleanupKind::StructFree:
+      cleanup_mgr.register_struct_cleanup(*env, a, alloca_ty);
       registered_cleanup = true;
       break;
     case CleanupKind::ListDataFree:
@@ -919,7 +915,7 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
   } else if (!s.ty && init_val && init_val->getType()->isPointerTy() &&
              !llvm::isa<llvm::Function>(init_val) &&
              !llvm::isa<llvm::Constant>(init_val)) {
-    cleanup_mgr.register_class_cleanup(*env, a, alloca_ty);
+    cleanup_mgr.register_struct_cleanup(*env, a, alloca_ty);
     registered_cleanup = true;
   }
 
@@ -929,8 +925,7 @@ void IrEmitter::compile_var_def(const VarDefStmt &s) {
   } else if (registered_cleanup && s.init && !s.ty) {
     if (auto *var = std::get_if<Variable>(&s.init->expr)) {
       auto vi = env->lookup_var(var->name);
-      if (vi.ptr &&
-          vi.borrow_kind != BorrowKind::Ref &&
+      if (vi.ptr && vi.borrow_kind != BorrowKind::Ref &&
           vi.borrow_kind != BorrowKind::CRef)
         invalidate_source(*s.init);
     }
@@ -1242,9 +1237,9 @@ llvm::Value *IrEmitter::compile_call(const CallExpr &call, Span span) {
       call.callee->expr);
 }
 
-llvm::Value *
-IrEmitter::compile_direct_or_ctor_call(const Variable &callee,
-                                       const CallExpr &call, Span) {
+llvm::Value *IrEmitter::compile_direct_or_ctor_call(const Variable &callee,
+                                                    const CallExpr &call,
+                                                    Span) {
   bool is_ctor = false;
   auto *fn = ctx->module->getFunction(callee.name);
   if (!fn) {
@@ -1252,10 +1247,10 @@ IrEmitter::compile_direct_or_ctor_call(const Variable &callee,
     is_ctor = true;
   }
 
-  ClassInfo *ctor_info = nullptr;
+  StructInfo *ctor_info = nullptr;
   if (is_ctor) {
-    auto it = ctx->class_registry.find(callee.name);
-    if (it != ctx->class_registry.end())
+    auto it = ctx->struct_registry.find(callee.name);
+    if (it != ctx->struct_registry.end())
       ctor_info = it->second.get();
   }
 
@@ -1286,9 +1281,8 @@ IrEmitter::compile_direct_or_ctor_call(const Variable &callee,
   return call_inst;
 }
 
-llvm::Value *
-IrEmitter::compile_indirect_call(const Variable &callee, const CallExpr &call,
-                                 Span) {
+llvm::Value *IrEmitter::compile_indirect_call(const Variable &callee,
+                                              const CallExpr &call, Span) {
   auto vi = env->lookup_var(callee.name);
   if (!vi.ptr || !vi.func_ty)
     return nullptr;
@@ -1320,9 +1314,10 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
 
   if (auto *st = llvm::dyn_cast<llvm::StructType>(self->getType()))
     if (auto *lt = lookup_list_type_by_struct(st))
-      if (auto desc = sema.get_builtins().lookup(runtime::LIST_TAG, callee.field))
-        return emit_builtin_method(desc->get(), st, lt->elem_ty,
-                                   *callee.object, call.args, span);
+      if (auto desc =
+              sema.get_builtins().lookup(runtime::LIST_TAG, callee.field))
+        return emit_builtin_method(desc->get(), st, lt->elem_ty, *callee.object,
+                                   call.args, span);
 
   auto *str_st = get_str_type()->struct_ty;
   if (self->getType() == str_st)
@@ -1332,7 +1327,7 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
                                  *callee.object, call.args, span);
 
   string mangled = callee.field;
-  for (auto &kv : ctx->class_registry) {
+  for (auto &kv : ctx->struct_registry) {
     auto it = kv.second->methods.find(callee.field);
     if (it != kv.second->methods.end()) {
       mangled = it->second;
@@ -1352,8 +1347,7 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
   const FunctionData *fn_data = nullptr;
   {
     auto *fn_sym = sema.get_symbol_table().resolve(mangled);
-    fn_data =
-        fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind()) : nullptr;
+    fn_data = fn_sym ? std::get_if<FunctionData>(&fn_sym->get_kind()) : nullptr;
   }
   if (fn_data && !fn_data->params.empty()) {
     if (auto *obj_var = std::get_if<Variable>(&callee.object->expr)) {
@@ -1369,7 +1363,8 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
 
   auto args = compile_args(fn, call.args, 1);
   if (fn_data) {
-    for (size_t i = 0; i < call.args.size() && (i + 1) < fn_data->params.size(); ++i) {
+    for (size_t i = 0; i < call.args.size() && (i + 1) < fn_data->params.size();
+         ++i) {
       auto &pty = fn_data->params[i + 1].data;
       if (std::get_if<ast::Type::Ref>(&pty) ||
           std::get_if<ast::Type::CRef>(&pty)) {
@@ -1397,7 +1392,7 @@ llvm::Value *IrEmitter::compile_method_call(const MemberExpr &callee,
 
 vector<llvm::Value *>
 IrEmitter::compile_args(llvm::Function *fn, const vector<uptr<ExprNode>> &args,
-                        size_t param_offset, const ClassInfo *ctor_info) {
+                        size_t param_offset, const StructInfo *ctor_info) {
   vector<llvm::Value *> out;
   size_t n_params = fn->getFunctionType()->getNumParams();
   size_t total = ctor_info ? n_params : args.size();
@@ -1407,15 +1402,13 @@ IrEmitter::compile_args(llvm::Function *fn, const vector<uptr<ExprNode>> &args,
       if (i < ctor_info->field_defaults.size() && ctor_info->field_defaults[i])
         out.push_back(compile_expr(**ctor_info->field_defaults[i]));
       else
-        out.push_back(zero_const(
-            fn->getFunctionType()->getParamType(
-                static_cast<unsigned>(i + param_offset))));
+        out.push_back(zero_const(fn->getFunctionType()->getParamType(
+            static_cast<unsigned>(i + param_offset))));
       continue;
     }
     auto *arg_val = compile_expr(*args[i]);
-    auto *param_ty =
-        fn->getFunctionType()->getParamType(
-            static_cast<unsigned>(i + param_offset));
+    auto *param_ty = fn->getFunctionType()->getParamType(
+        static_cast<unsigned>(i + param_offset));
     if (param_ty->isPointerTy() && arg_val &&
         !arg_val->getType()->isPointerTy())
       if (auto *var = std::get_if<Variable>(&args[i]->expr))
@@ -1438,10 +1431,9 @@ void IrEmitter::invalidate_owned_args(const string &fn_name,
        i < args.size() && (i + param_offset) < fn_data->params.size(); ++i) {
     auto &pty = fn_data->params[i + param_offset].data;
     bool is_own = std::get_if<ast::Type::Own>(&pty) != nullptr;
-    bool is_move_struct = !is_own &&
-        (std::get_if<ast::Type::Class>(&pty) ||
-         std::get_if<ast::Type::List>(&pty) ||
-         std::get_if<ast::Type::Str>(&pty));
+    bool is_move_struct = !is_own && (std::get_if<ast::Type::Struct>(&pty) ||
+                                      std::get_if<ast::Type::List>(&pty) ||
+                                      std::get_if<ast::Type::Str>(&pty));
     if (!is_own && !is_move_struct)
       continue;
     invalidate_source(*args[i]);
@@ -1459,9 +1451,9 @@ llvm::Value *IrEmitter::compile_assignment(const AssignExpr &a) {
             if (!vi.ptr)
               return;
             if (vi.borrow_kind == BorrowKind::CRef) {
-              diag.error(a.target->span,
-                         "Cannot assign to variable '" + t.name +
-                             "' of const reference type")
+              diag.error(a.target->span, "Cannot assign to variable '" +
+                                             t.name +
+                                             "' of const reference type")
                   .emit_to(diag);
               return;
             }
@@ -1481,18 +1473,19 @@ llvm::Value *IrEmitter::compile_assignment(const AssignExpr &a) {
                   st && lookup_list_type_by_struct(st))
                 cleanup_mgr.register_list_cleanup(*env, vi.ptr, vi.alloca_ty,
                                                   st);
-              else if (auto *st = llvm::dyn_cast<llvm::StructType>(val->getType());
+              else if (auto *st =
+                           llvm::dyn_cast<llvm::StructType>(val->getType());
                        st && st == get_str_type()->struct_ty)
-                cleanup_mgr.register_str_cleanup(*env, vi.ptr, vi.alloca_ty, st);
+                cleanup_mgr.register_str_cleanup(*env, vi.ptr, vi.alloca_ty,
+                                                 st);
               else if (val->getType()->isPointerTy() &&
                        !llvm::isa<llvm::Function>(val))
-                cleanup_mgr.register_class_cleanup(*env, vi.ptr, vi.alloca_ty);
+                cleanup_mgr.register_struct_cleanup(*env, vi.ptr, vi.alloca_ty);
             }
-            if (!self_assign &&
-                (vi.borrow_kind == BorrowKind::Own ||
-                 (vi.borrow_kind == BorrowKind::None &&
-                  val->getType()->isPointerTy() &&
-                  !llvm::isa<llvm::Function>(val))))
+            if (!self_assign && (vi.borrow_kind == BorrowKind::Own ||
+                                 (vi.borrow_kind == BorrowKind::None &&
+                                  val->getType()->isPointerTy() &&
+                                  !llvm::isa<llvm::Function>(val))))
               invalidate_source(*a.value);
           },
           [&](const MemberExpr &) {
@@ -1523,7 +1516,7 @@ llvm::Value *IrEmitter::compile_member_access(const ExprNode &obj,
   auto *obj_val = compile_expr(obj);
   if (!obj_val)
     return nullptr;
-  for (auto &kv : ctx->class_registry) {
+  for (auto &kv : ctx->struct_registry) {
     auto it = kv.second->field_indices.find(field);
     if (it == kv.second->field_indices.end())
       continue;
@@ -1540,7 +1533,7 @@ llvm::Value *IrEmitter::compile_member_ptr(const ExprNode &e) {
                           auto *ov = compile_expr(*m.object);
                           if (!ov)
                             return nullptr;
-                          for (auto &kv : ctx->class_registry) {
+                          for (auto &kv : ctx->struct_registry) {
                             auto it = kv.second->field_indices.find(m.field);
                             if (it != kv.second->field_indices.end())
                               return ctx->builder->CreateStructGEP(
@@ -1598,8 +1591,7 @@ llvm::Value *IrEmitter::compile_index_ptr(const ExprNode &e) {
             if (st) {
               auto *lt = lookup_list_type_by_struct(st);
               if (lt) {
-                auto *tmp =
-                    ctx->builder->CreateAlloca(st, nullptr, "list.tmp");
+                auto *tmp = ctx->builder->CreateAlloca(st, nullptr, "list.tmp");
                 ctx->builder->CreateStore(ov, tmp);
                 auto *len = ctx->builder->CreateLoad(
                     i64(c), ctx->builder->CreateStructGEP(st, tmp, 0));
@@ -1609,16 +1601,15 @@ llvm::Value *IrEmitter::compile_index_ptr(const ExprNode &e) {
                 return ctx->builder->CreateGEP(lt->elem_ty, data, iv);
               }
               if (st == get_str_type()->struct_ty) {
-                auto *tmp =
-                    ctx->builder->CreateAlloca(st, nullptr, "str.tmp");
+                auto *tmp = ctx->builder->CreateAlloca(st, nullptr, "str.tmp");
                 ctx->builder->CreateStore(ov, tmp);
                 auto *len = ctx->builder->CreateLoad(
                     i64(c), ctx->builder->CreateStructGEP(st, tmp, 0));
                 emit_bounds_check(iv, len, ie.index->span);
                 auto *data = ctx->builder->CreateLoad(
                     ptr_ty(c), ctx->builder->CreateStructGEP(st, tmp, 1));
-                return ctx->builder->CreateGEP(
-                    llvm::IntegerType::getInt8Ty(c), data, iv);
+                return ctx->builder->CreateGEP(llvm::IntegerType::getInt8Ty(c),
+                                               data, iv);
               }
             }
             if (ov->getType()->isPointerTy())
@@ -1650,8 +1641,7 @@ void IrEmitter::emit_bounds_check(llvm::Value *ix, llvm::Value *len, Span) {
 // ── list / string ──
 
 llvm::Value *
-IrEmitter::emit_list_literal(const vector<uptr<ExprNode>> &elements,
-                             Span) {
+IrEmitter::emit_list_literal(const vector<uptr<ExprNode>> &elements, Span) {
   auto &c = *ctx->llvm_ctx;
   vector<llvm::Value *> vals;
   vals.reserve(elements.size());
@@ -1743,10 +1733,12 @@ void IrEmitter::emit_list_with_init_fields(
                                 llvm::ConstantInt::get(i64(c), i)));
 }
 
-llvm::Value *IrEmitter::emit_builtin_method(
-    const runtime::BuiltinMethod &desc, llvm::StructType *st,
-    llvm::Type *elem_ty, const ExprNode &obj_expr,
-    const vector<uptr<ExprNode>> &args, Span span) {
+llvm::Value *IrEmitter::emit_builtin_method(const runtime::BuiltinMethod &desc,
+                                            llvm::StructType *st,
+                                            llvm::Type *elem_ty,
+                                            const ExprNode &obj_expr,
+                                            const vector<uptr<ExprNode>> &args,
+                                            Span span) {
   auto *list_ptr =
       std::visit(overloaded{
                      [&](const Variable &var) -> llvm::Value * {
@@ -1771,7 +1763,7 @@ llvm::Value *IrEmitter::emit_builtin_method(
   }
 
   return (*desc.value_emit)(make_ir_gen_context(), list_ptr, st, elem_ty,
-                          arg_vals, span);
+                            arg_vals, span);
 }
 
 llvm::Value *IrEmitter::emit_string_literal(const string &s) {

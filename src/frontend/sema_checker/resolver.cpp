@@ -33,7 +33,7 @@ bool Resolver::run(Program &program, semantics::SemaCtxt &ctx,
   for (const auto &item_node : program.items) {
     std::visit(
         overloaded{
-            [&](const Class &cls) { declare_type_item(item_node, ctx, diag); },
+            [&](const Struct &strukt) { declare_type_item(item_node, ctx, diag); },
             [&](const Trait &tr) { declare_trait_item(item_node, ctx, diag); },
             [&](const Impl &imp) {
               declare_impl_methods(imp, item_node.span, ctx, diag);
@@ -73,8 +73,8 @@ void Resolver::declare_top_level(Symbol symbol, semantics::SemaCtxt &ctx,
 void Resolver::declare_type_item(const ItemNode &item_node,
                                  semantics::SemaCtxt &ctx,
                                  error::DiagCtxt &diag) {
-  std::visit(overloaded{[&](const Class &cls) {
-                          if (auto dup = find_duplicate_field(cls.fields)) {
+  std::visit(overloaded{[&](const Struct &strukt) {
+                          if (auto dup = find_duplicate_field(strukt.fields)) {
                             diag.error(item_node.span,
                                        "duplicate field name `" + *dup + "`")
                                 .emit_to(diag);
@@ -82,16 +82,16 @@ void Resolver::declare_type_item(const ItemNode &item_node,
 
                           vector<std::pair<string, ast::Type>> fields_sym;
                           vector<bool> has_default;
-                          fields_sym.reserve(cls.fields.size());
-                          has_default.reserve(cls.fields.size());
-                          for (const auto &f : cls.fields) {
+                          fields_sym.reserve(strukt.fields.size());
+                          has_default.reserve(strukt.fields.size());
+                          for (const auto &f : strukt.fields) {
                             auto ty = f.ty.clone();
                             fields_sym.emplace_back(f.name, std::move(ty));
                             has_default.push_back(f.init.has_value());
                           }
 
-                          Symbol sym = Symbol::new_class(
-                              cls.name, std::move(fields_sym),
+                          Symbol sym = Symbol::new_struct(
+                              strukt.name, std::move(fields_sym),
                               std::move(has_default), item_node.span);
                           declare_top_level(std::move(sym), ctx, diag);
                         },
@@ -213,9 +213,9 @@ void Resolver::declare_impl_methods(const Impl &impl, Span span,
         else if (auto *own = std::get_if<ast::Type::Own>(&first.ty.data))
           self_inner = own->inner.get();
 
-        ast::Type expected = ast::type_class(impl.class_name);
+        ast::Type expected = ast::type_struct(impl.struct_name);
         if (!self_inner || *self_inner != expected) {
-          diag.error(span, "expected `self: " + impl.class_name +
+          diag.error(span, "expected `self: " + impl.struct_name +
                                "`, found `self: " + first.ty.to_string() + "`")
               .emit_to(diag);
         }
@@ -234,7 +234,7 @@ void Resolver::declare_impl_methods(const Impl &impl, Span span,
         header.return_type ? header.return_type->clone() : ast::type_void();
 
     // 符号名：类名_方法名（避免冲突）
-    std::string mangled = impl.class_name + "_" + header.name;
+    std::string mangled = impl.struct_name + "_" + header.name;
 
     Symbol sym = Symbol::new_function(mangled, std::move(param_types),
                                       std::move(ret_ty), span);
@@ -254,8 +254,8 @@ void Resolver::declare_global_var(const GlobalVar &gv, Span span,
 void Resolver::validate_impl_target(const Impl &impl, Span span,
                                     semantics::SemaCtxt &ctx,
                                     error::DiagCtxt &diag) {
-  if (!ctx.get_symbol_table().resolve_global(impl.class_name)) {
-    diag.error(span, "class `" + impl.class_name + "` not found").emit_to(diag);
+  if (!ctx.get_symbol_table().resolve_global(impl.struct_name)) {
+    diag.error(span, "struct `" + impl.struct_name + "` not found").emit_to(diag);
   }
 
   if (impl.trait_name) {
@@ -266,36 +266,36 @@ void Resolver::validate_impl_target(const Impl &impl, Span span,
   }
 }
 
-void Resolver::collect_class_deps(const ast::Type &ty, vector<string> &deps) {
+void Resolver::collect_struct_deps(const ast::Type &ty, vector<string> &deps) {
   std::visit(
       [&](const auto &v) {
         using T = std::decay_t<decltype(v)>;
-        if constexpr (std::is_same_v<T, ast::Type::Class>) {
+        if constexpr (std::is_same_v<T, ast::Type::Struct>) {
           deps.push_back(v.name);
         } else if constexpr (std::is_same_v<T, ast::Type::Ptr>) {
           if (v.inner) {
-            collect_class_deps(*v.inner, deps);
+            collect_struct_deps(*v.inner, deps);
           }
         } else if constexpr (std::is_same_v<T, ast::Type::Ref>) {
           if (v.inner) {
-            collect_class_deps(*v.inner, deps);
+            collect_struct_deps(*v.inner, deps);
           }
         } else if constexpr (std::is_same_v<T, ast::Type::Own>) {
           if (v.inner) {
-            collect_class_deps(*v.inner, deps);
+            collect_struct_deps(*v.inner, deps);
           }
         } else if constexpr (std::is_same_v<T, ast::Type::List>) {
           if (v.inner) {
-            collect_class_deps(*v.inner, deps);
+            collect_struct_deps(*v.inner, deps);
           }
         } else if constexpr (std::is_same_v<T, ast::Type::Func>) {
           for (const auto &param : v.params) {
             if (param) {
-              collect_class_deps(*param, deps);
+              collect_struct_deps(*param, deps);
             }
           }
           if (v.ret) {
-            collect_class_deps(*v.ret, deps);
+            collect_struct_deps(*v.ret, deps);
           }
         }
       },
@@ -350,21 +350,21 @@ void Resolver::check_struct_recursion(const Program &program,
   std::unordered_map<std::string, std::vector<std::string>> deps;
   std::unordered_map<std::string, Span> spans;
 
-  // 收集所有类及其依赖
+  // 收集所有结构体及其依赖
   for (const auto &item_node : program.items) {
-    std::visit(overloaded{[&](const Class &cls) {
-                            spans[cls.name] = item_node.span;
+    std::visit(overloaded{[&](const Struct &strukt) {
+                            spans[strukt.name] = item_node.span;
                             std::vector<std::string> field_deps;
-                            for (const auto &field : cls.fields) {
-                              collect_class_deps(field.ty, field_deps);
+                            for (const auto &field : strukt.fields) {
+                              collect_struct_deps(field.ty, field_deps);
                             }
-                            deps[cls.name] = std::move(field_deps);
+                            deps[strukt.name] = std::move(field_deps);
                           },
                           [](const auto &) { /* 忽略其他类型 */ }},
                item_node.item);
   }
 
-  // 检测每个类的循环依赖
+  // 检测每个结构体的循环依赖
   std::unordered_set<std::string> visited;
   std::vector<std::string> stack;
   std::unordered_set<std::string> in_stack;

@@ -41,16 +41,16 @@ public:
     struct List {
       uptr<Type> inner;
     }; 
-      struct Class {
+      struct Struct {
       string name;
     };
     struct TraitObject {
       string name;
     };
-    using Variant = std::variant<Str, List, Class, TraitObject>;
+    using Variant = std::variant<Str, List, Struct, TraitObject>;
     explicit StructType(Str s) : data(std::move(s)) {}
     explicit StructType(List l) : data(std::move(l)) {}
-    explicit StructType(Class c) : data(std::move(c)) {}
+    explicit StructType(Struct c) : data(std::move(c)) {}
     explicit StructType(TraitObject t) : data(std::move(t)) {}
     StructType() = delete;
     StructType(const StructType &) = delete;
@@ -105,7 +105,7 @@ public:
     return Type(
         Func{std::move(params), std::make_unique<Type>(std::move(ret))});
   }
-  static Type class_(string name) { return Type(StructType(StructType::Class{std::move(name)})); }
+  static Type struct_(string name) { return Type(StructType(StructType::Struct{std::move(name)})); }
   static Type trait(string name) { return Type(StructType(StructType::TraitObject{std::move(name)})); }
   static Type error() { return Type(Error{}); }
 

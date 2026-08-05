@@ -33,7 +33,7 @@ public:
   void validate_impl_target(const Impl &impl, Span span,
                             semantics::SemaCtxt &ctx, error::DiagCtxt &diag);
 
-  void collect_class_deps(const ast::Type &ty, vector<string> &deps);
+  void collect_struct_deps(const ast::Type &ty, vector<string> &deps);
 
   void detect_cycle(const string &current,
                     const std::unordered_map<string, vector<string>> &deps,

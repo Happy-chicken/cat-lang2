@@ -109,7 +109,7 @@ std::string type_to_string(const Type &type) {
                      ss << "Void";
                    }
                  },
-                 [&](const Type::Class &t) { ss << t.name; },
+                 [&](const Type::Struct &t) { ss << t.name; },
                  [&](const Type::TraitObject &t) { ss << t.name; },
              },
              type.data);
@@ -357,8 +357,8 @@ void print_item_impl(std::ostream &os, const std::string &prefix, bool is_last,
             }
             os << "\n";
           },
-          [&](const Class &e) {
-            os << prefix << branch(is_last) << "Class: " << e.name << "\n";
+          [&](const Struct &e) {
+            os << prefix << branch(is_last) << "Struct: " << e.name << "\n";
             auto cls_prefix = next_prefix(prefix, is_last);
             for (size_t i = 0; i < e.fields.size(); ++i) {
               os << cls_prefix << branch(i == e.fields.size() - 1)
@@ -390,9 +390,9 @@ void print_item_impl(std::ostream &os, const std::string &prefix, bool is_last,
           [&](const Impl &e) {
             os << prefix << branch(is_last) << "Impl: ";
             if (e.trait_name) {
-              os << *e.trait_name << " for " << e.class_name;
+              os << *e.trait_name << " for " << e.struct_name;
             } else {
-              os << e.class_name;
+              os << e.struct_name;
             }
             os << "\n";
             auto impl_prefix = next_prefix(prefix, is_last);

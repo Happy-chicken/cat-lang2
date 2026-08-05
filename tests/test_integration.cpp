@@ -302,9 +302,9 @@ TEST(Integration, OwnMultipleParams) {
             65);
 }
 
-TEST(Integration, OwnWithClass) {
+TEST(Integration, OwnWithStruct) {
   EXPECT_EQ(compile_and_run(R"(
-        class Point {
+        struct Point {
             let x: int = 0;
             let y: int = 0;
         }
@@ -314,7 +314,7 @@ TEST(Integration, OwnWithClass) {
             return get_x(pt);
         }
     )"),
-            7);
+             7);
 }
 
 TEST(Integration, OwnNestedCalls) {
@@ -358,9 +358,9 @@ TEST(Integration, OwnComputeThenReturn) {
             49);
 }
 
-TEST(Integration, OwnClassFieldModify) {
+TEST(Integration, OwnStructFieldModify) {
   EXPECT_EQ(compile_and_run(R"(
-        class Counter {
+        struct Counter {
             let val: int = 0;
         }
         fn bump(c: own<Counter>) -> int {
@@ -373,12 +373,12 @@ TEST(Integration, OwnClassFieldModify) {
             return bump(ct);
         }
     )"),
-            12);
+             12);
 }
 
-TEST(Integration, OwnChainWithClass) {
+TEST(Integration, OwnChainWithStruct) {
   EXPECT_EQ(compile_and_run(R"(
-        class Box {
+        struct Box {
             let val: int = 0;
         }
         fn inc_box(b: own<Box>) -> int {
@@ -393,7 +393,7 @@ TEST(Integration, OwnChainWithClass) {
             return wrap_inc(bx);
         }
     )"),
-            14);
+             14);
 }
 
 TEST(Integration, FirstClassFunctionTypeAnnotation) {
@@ -518,9 +518,9 @@ TEST(Integration, ListCloneThenUseOriginal) {
             0);
 }
 
-TEST(Integration, ClassClone) {
+TEST(Integration, StructClone) {
   EXPECT_EQ(compile_and_run(R"(
-        class Point {
+        struct Point {
             let x: int = 0;
             let y: int = 0;
         }
@@ -532,12 +532,12 @@ TEST(Integration, ClassClone) {
             return 1;
         }
     )"),
-            0);
+             0);
 }
 
-TEST(Integration, ClassParamMove) {
+TEST(Integration, StructParamMove) {
   EXPECT_EQ(compile_and_run(R"(
-        class Point {
+        struct Point {
             let x: int = 0;
             let y: int = 0;
         }
@@ -549,7 +549,7 @@ TEST(Integration, ClassParamMove) {
             return 1;
         }
     )"),
-            -999);
+             -999);
 }
 
 TEST(Integration, ListCloneBeforePass) {
@@ -627,9 +627,9 @@ TEST(Integration, CrefWriteRejected) {
             -999);
 }
 
-TEST(Integration, ClassCloneThenMutateOriginal) {
+TEST(Integration, StructCloneThenMutateOriginal) {
   EXPECT_EQ(compile_and_run(R"(
-        class Point {
+        struct Point {
             let x: int = 0;
             let y: int = 0;
         }
@@ -641,7 +641,7 @@ TEST(Integration, ClassCloneThenMutateOriginal) {
             return 0;
         }
     )"),
-            1);
+             1);
 }
 
 TEST(Integration, RefThroughParamCallerSeesMutation) {

@@ -64,9 +64,7 @@ std::optional<Token> Parser::consume(TokenKind kind, std::string_view msg) {
   return std::nullopt;
 }
 
-Span Parser::get_last_span() const {
-  return last_span;
-}
+Span Parser::get_last_span() const { return last_span; }
 
 template <typename T>
 error::ParseResult<T> Parser::err(Span span, std::string_view msg) {
@@ -95,7 +93,7 @@ void Parser::synchronize() {
       advance();
       return;
     }
-    if (check_any({TokenKind::Let, TokenKind::Fn, TokenKind::Class,
+    if (check_any({TokenKind::Let, TokenKind::Fn, TokenKind::Struct,
                    TokenKind::If, TokenKind::While, TokenKind::Return,
                    TokenKind::Break, TokenKind::Continue, TokenKind::RightBrace,
                    TokenKind::TokenEOF})) {
@@ -190,10 +188,10 @@ error::ParseResult<ItemNode> Parser::parse_item() {
       return std::nullopt;
     }
   }
-  case TokenKind::Class: {
-    auto cls = parse_class();
-    if (cls.has_value()) {
-      return ItemNode{span, std::move(*cls)};
+  case TokenKind::Struct: {
+    auto strukt = parse_struct();
+    if (strukt.has_value()) {
+      return ItemNode{span, std::move(*strukt)};
     } else {
       return std::nullopt;
     }
@@ -368,7 +366,8 @@ error::ParseResult<StmtNode> Parser::parse_return_stmt() {
     expr = std::move(*ret_expr);
   }
   consume(TokenKind::Semicolon, "Expected ';' after return statement.");
-  return StmtNode{ret_span.merge(get_last_span()), make_return(std::move(expr))};
+  return StmtNode{ret_span.merge(get_last_span()),
+                  make_return(std::move(expr))};
 }
 
 error::ParseResult<StmtNode> Parser::parse_block_stmt() {
@@ -409,8 +408,9 @@ error::ParseResult<StmtNode> Parser::parse_var_def_stmt() {
     init = std::move(*init_expr);
   }
   consume(TokenKind::Semicolon, "Expected ';' after variable definition.");
-  return StmtNode{let_span.merge(get_last_span()), make_var_def(std::move(var_name),
-                                               std::move(ty), std::move(init))};
+  return StmtNode{
+      let_span.merge(get_last_span()),
+      make_var_def(std::move(var_name), std::move(ty), std::move(init))};
 }
 
 error::ParseResult<ExprNode> Parser::parse_expr() { return parse_assignment(); }
@@ -695,7 +695,8 @@ error::ParseResult<ExprNode> Parser::parse_postfix() {
       auto object_span = object_node->span;
       auto member_expr =
           make_member(std::move(object_node), field_token->lexeme);
-      expr = ExprNode{object_span.merge(field_token->span), std::move(member_expr)};
+      expr = ExprNode{object_span.merge(field_token->span),
+                      std::move(member_expr)};
       continue;
     }
     case TokenKind::LeftBracket: {
@@ -719,7 +720,8 @@ error::ParseResult<ExprNode> Parser::parse_postfix() {
       auto index_node = std::make_unique<ExprNode>(std::move(*index_expr));
       auto index_expr_node =
           make_index(std::move(object_node), std::move(index_node));
-      expr = ExprNode{object_span.merge(rbracket_span), std::move(index_expr_node)};
+      expr = ExprNode{object_span.merge(rbracket_span),
+                      std::move(index_expr_node)};
       continue;
     }
     case TokenKind::PlusPlus: {
@@ -883,9 +885,9 @@ error::ParseResult<ast::Type> Parser::parse_type() {
     return ast::type_void();
   }
   case TokenKind::Identifier: {
-    auto class_name = current_token->lexeme;
+    auto struct_name = current_token->lexeme;
     advance();
-    return ast::type_class(class_name);
+    return ast::type_struct(struct_name);
   }
   case TokenKind::Ptr: {
     advance();
@@ -1072,22 +1074,22 @@ error::ParseResult<Trait> Parser::parse_trait() {
 
 error::ParseResult<Impl> Parser::parse_impl() {
   consume(TokenKind::Impl, "Expected 'impl' before impl block.");
-  auto trait_or_class_token = consume(
-      TokenKind::Identifier, "Expected trait or class name after 'impl'.");
-  if (!trait_or_class_token.has_value()) {
+  auto trait_or_struct_token = consume(
+      TokenKind::Identifier, "Expected trait or struct name after 'impl'.");
+  if (!trait_or_struct_token.has_value()) {
     return std::nullopt;
   }
-  string trait_or_class_name = trait_or_class_token->lexeme;
+  string trait_or_struct_name = trait_or_struct_token->lexeme;
   optional<string> trait_name = std::nullopt;
   if (check(TokenKind::For)) {
     advance(); // consume 'for'
-    auto class_token =
-        consume(TokenKind::Identifier, "Expected class name after 'for'.");
-    if (!class_token.has_value()) {
+    auto struct_token =
+        consume(TokenKind::Identifier, "Expected struct name after 'for'.");
+    if (!struct_token.has_value()) {
       return std::nullopt;
     }
-    trait_name = std::move(trait_or_class_name);
-    trait_or_class_name = class_token->lexeme;
+    trait_name = std::move(trait_or_struct_name);
+    trait_or_struct_name = struct_token->lexeme;
   }
   consume(TokenKind::LeftBrace, "Expected '{' after impl header.");
   auto methods = vector<FunctionDef>{};
@@ -1099,7 +1101,7 @@ error::ParseResult<Impl> Parser::parse_impl() {
     methods.push_back(std::move(*method));
   }
   consume(TokenKind::RightBrace, "Expected '}' after impl block.");
-  return Impl{std::move(trait_name), std::move(trait_or_class_name),
+  return Impl{std::move(trait_name), std::move(trait_or_struct_name),
               std::move(methods)};
 }
 
@@ -1131,15 +1133,15 @@ error::ParseResult<Field> Parser::parse_field() {
   return Field{std::move(field_name), std::move(*field_type), std::move(init)};
 }
 
-error::ParseResult<Class> Parser::parse_class() {
-  consume(TokenKind::Class, "Expected 'class' before class definition.");
-  auto class_name_token =
-      consume(TokenKind::Identifier, "Expected class name after 'class'.");
-  if (!class_name_token.has_value()) {
+error::ParseResult<Struct> Parser::parse_struct() {
+  consume(TokenKind::Struct, "Expected 'struct' before struct definition.");
+  auto struct_name_token =
+      consume(TokenKind::Identifier, "Expected struct name after 'struct'.");
+  if (!struct_name_token.has_value()) {
     return std::nullopt;
   }
-  string class_name = class_name_token->lexeme;
-  consume(TokenKind::LeftBrace, "Expected '{' after class name.");
+  string struct_name = struct_name_token->lexeme;
+  consume(TokenKind::LeftBrace, "Expected '{' after struct name.");
   auto fields = vector<Field>{};
   while (!check(TokenKind::RightBrace) && !is_at_end()) {
     auto field = parse_field();
@@ -1148,8 +1150,8 @@ error::ParseResult<Class> Parser::parse_class() {
     }
     fields.push_back(std::move(*field));
   }
-  consume(TokenKind::RightBrace, "Expected '}' after class definition.");
-  return Class{std::move(class_name), std::move(fields)};
+  consume(TokenKind::RightBrace, "Expected '}' after struct definition.");
+  return Struct{std::move(struct_name), std::move(fields)};
 }
 
 error::ParseResult<GlobalVar> Parser::parse_global_var() {

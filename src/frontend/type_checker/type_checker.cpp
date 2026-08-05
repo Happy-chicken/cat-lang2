@@ -29,22 +29,26 @@ static optional<ast::Type> semantic_type_to_ast_type(const Type &ty) {
           [](const Type::StructType &struct_type) -> optional<ast::Type> {
             return std::visit(
                 overloaded{
-                    [&](const Type::StructType::Str &str)->optional<ast::Type> {
-                      return ast::type_str();
-                    },
-                    [&](const Type::StructType::List &list)->optional<ast::Type> {
+                    [&](const Type::StructType::Str &str)
+                        -> optional<ast::Type> { return ast::type_str(); },
+                    [&](const Type::StructType::List &list)
+                        -> optional<ast::Type> {
                       auto inner = semantic_type_to_ast_type(*list.inner);
                       if (inner.has_value())
                         return ast::type_list(inner->clone());
                       return std::nullopt;
                     },
-                    [&](const Type::StructType::Class &cls)->optional<ast::Type> {
-                      return ast::type_class(cls.name);
+                    [&](const Type::StructType::Struct &strukt)
+                        -> optional<ast::Type> {
+                      return ast::type_struct(strukt.name);
                     },
-                    [&](const Type::StructType::TraitObject &trait)->optional<ast::Type> {
+                    [&](const Type::StructType::TraitObject &trait)
+                        -> optional<ast::Type> {
                       return ast::type_trait(trait.name);
                     },
-                    [&](const auto &) -> optional<ast::Type> { return std::nullopt; },
+                    [&](const auto &) -> optional<ast::Type> {
+                      return std::nullopt;
+                    },
                 },
                 struct_type.get_data());
           },
@@ -105,17 +109,14 @@ void TypeChecker::check_function(const FunctionDef &func, Span span,
 
   for (const auto &param : func.function_header.params) {
     BorrowKind kind = std::visit(
-      overloaded{
-          [](const ast::Type::Ref&)  { return BorrowKind::Ref; },
-          [](const ast::Type::CRef&) { return BorrowKind::CRef; },
-          [](const ast::Type::Own&)  { return BorrowKind::Own; },
-          [](const auto&)            { return BorrowKind::None; }
-      },
-      param.ty.data
-    );
+        overloaded{[](const ast::Type::Ref &) { return BorrowKind::Ref; },
+                   [](const ast::Type::CRef &) { return BorrowKind::CRef; },
+                   [](const ast::Type::Own &) { return BorrowKind::Own; },
+                   [](const auto &) { return BorrowKind::None; }},
+        param.ty.data);
 
-    Symbol param_sym = Symbol::new_parameter(param.name, param.ty.clone(),
-                                             kind, span);
+    Symbol param_sym =
+        Symbol::new_parameter(param.name, param.ty.clone(), kind, span);
     ctx.get_symbol_table().declare(std::move(param_sym));
   }
 
@@ -157,23 +158,21 @@ void TypeChecker::check_stmt(const StmtNode &stmt_node, Span span,
                   ctx.get_type_ctxt().resolve_type(inferred));
             }
             if (!stored_type.has_value()) {
-              diag.error(span, "Failed to deduce a concrete type for variable '" +
-                                    var_def.name + "'" + inferred.to_string())
+              diag.error(span,
+                         "Failed to deduce a concrete type for variable '" +
+                             var_def.name + "'" + inferred.to_string())
                   .emit_to(diag);
               return;
             }
             BorrowKind kind = std::visit(
-              overloaded{
-                  [](const ast::Type::Ref&)  { return BorrowKind::Ref; },
-                  [](const ast::Type::CRef&) { return BorrowKind::CRef; },
-                  [](const ast::Type::Own&)  { return BorrowKind::Own; },
-                  [](const auto&)            { return BorrowKind::None; }
-              },
-              stored_type->data
-            );
-            Symbol var_sym =
-                Symbol::new_variable(var_def.name, std::move(stored_type),
-                                     false, span, kind);
+                overloaded{
+                    [](const ast::Type::Ref &) { return BorrowKind::Ref; },
+                    [](const ast::Type::CRef &) { return BorrowKind::CRef; },
+                    [](const ast::Type::Own &) { return BorrowKind::Own; },
+                    [](const auto &) { return BorrowKind::None; }},
+                stored_type->data);
+            Symbol var_sym = Symbol::new_variable(
+                var_def.name, std::move(stored_type), false, span, kind);
             ctx.get_symbol_table().declare(std::move(var_sym));
           },
           [&](const IfStmt &if_stmt) {
@@ -263,9 +262,9 @@ void TypeChecker::check_global_var(const GlobalVar &gv, Span span,
   inferer.infer_let_binding(declared_type, gv.init, span, ctx, diag);
 }
 
-void TypeChecker::check_class_defaults(const Class &cls, SemaCtxt &ctx,
-                                       error::DiagCtxt &diag) {
-  for (const auto &field : cls.fields) {
+void TypeChecker::check_struct_defaults(const Struct &strukt, SemaCtxt &ctx,
+                                        error::DiagCtxt &diag) {
+  for (const auto &field : strukt.fields) {
     if (field.init.has_value()) {
       Type decl_ty = Inferer::ast_type_to_semantic_type(field.ty);
       Type init_ty =

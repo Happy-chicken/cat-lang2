@@ -27,7 +27,7 @@ struct ParameterData {
   BorrowKind borr_kind = BorrowKind::None;
 };
 
-struct ClassData {
+struct StructData {
   vector<std::pair<string, ast::Type>> fields;
   vector<bool> has_default;
 };
@@ -37,7 +37,7 @@ struct TraitData {
 };
 
 using SymbolKind = std::variant<VariableData, FunctionData, TypeData,
-                                ParameterData, ClassData, TraitData>;
+                                ParameterData, StructData, TraitData>;
 
 struct Symbol {
 public:
@@ -61,7 +61,7 @@ public:
 
   static Symbol new_type(string name, Span span);
 
-  static Symbol new_class(string name,
+  static Symbol new_struct(string name,
                           vector<std::pair<string, ast::Type>> fields,
                           vector<bool> has_default, Span span);
 
@@ -69,7 +69,7 @@ public:
 
   bool is_type() const { return std::holds_alternative<TypeData>(kind); }
 
-  bool is_class() const { return std::holds_alternative<ClassData>(kind); }
+  bool is_struct() const { return std::holds_alternative<StructData>(kind); }
 
   bool is_trait() const { return std::holds_alternative<TraitData>(kind); }
 

@@ -22,8 +22,8 @@ CleanupKind CleanupManager::classify_type(const ast::Type &ty) {
               return CleanupKind::None;
             return std::visit(
                 overloaded{
-                    [](const ast::Type::Class &) {
-                      return CleanupKind::ClassFree;
+                    [](const ast::Type::Struct &) {
+                      return CleanupKind::StructFree;
                     },
                     [](const ast::Type::List &) {
                       return CleanupKind::OwnListFree;
@@ -32,7 +32,7 @@ CleanupKind CleanupManager::classify_type(const ast::Type &ty) {
                 },
                 o.inner->data);
           },
-          [](const ast::Type::Class &) { return CleanupKind::ClassFree; },
+          [](const ast::Type::Struct &) { return CleanupKind::StructFree; },
           [](const ast::Type::List &) { return CleanupKind::ListDataFree; },
           // Str cleanup requires runtime-owned tracking; defer.
           [](const ast::Type::Str &) { return CleanupKind::None; },
@@ -41,7 +41,7 @@ CleanupKind CleanupManager::classify_type(const ast::Type &ty) {
       ty.data);
 }
 
-void CleanupManager::register_class_cleanup(Env &env, llvm::Value *alloca,
+void CleanupManager::register_struct_cleanup(Env &env, llvm::Value *alloca,
                                             llvm::Type *alloca_ty) {
   env.add_cleanup(alloca, alloca_ty, true);
 }
@@ -89,7 +89,7 @@ void CleanupManager::emit_scope_cleanup(Env &env_scope) {
        ++it) {
     if (it->cancelled)
       continue;
-    if (it->is_class) {
+    if (it->is_struct) {
       auto *ptr = ctx.builder->CreateLoad(it->alloca_ty, it->alloca);
       ctx.builder->CreateCall(free_fn, {ptr});
     } else if (it->is_str && it->list_st) {
@@ -139,7 +139,7 @@ void CleanupManager::emit_var_free(Env &env, llvm::Value *alloca) {
         auto &cc = *ctx.llvm_ctx;
         auto *free_fn =
             declare_runtime_func("free", void_ty(cc), {ptr_ty(cc)});
-            if (c.is_class) {
+            if (c.is_struct) {
               auto *ptr = ctx.builder->CreateLoad(c.alloca_ty, c.alloca);
               ctx.builder->CreateCall(free_fn, {ptr});
             } else if (c.is_str && c.list_st) {

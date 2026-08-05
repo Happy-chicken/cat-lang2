@@ -62,8 +62,8 @@ namespace cat::semantics {
 
               return Type::func(std::move(param_types), std::move(ret_type));
             },
-            [](const ast::Type::Class &cls) -> Type {
-              return Type::class_(cls.name);
+            [](const ast::Type::Struct &strukt) -> Type {
+              return Type::struct_(strukt.name);
             },
             [](const ast::Type::TraitObject &trait) -> Type {
               return Type::trait(trait.name);
@@ -245,8 +245,8 @@ namespace cat::semantics {
               Type ret_type = ast_type_to_semantic_type(func.return_type);
               return Type::func(std::move(param_types), std::move(ret_type));
             },
-            [&](const ClassData &) -> Type {
-              return Type::class_(sym->get_name());
+            [&](const StructData &) -> Type {
+              return Type::struct_(sym->get_name());
             },
             [&](const auto &) -> Type { return Type::error(); },
         },
@@ -468,29 +468,29 @@ namespace cat::semantics {
     }
 
     if (auto *struct_ty = std::get_if<Type::StructType>(&resolved.get_data())) {
-      if (auto * cls = std::get_if<Type::StructType::Class>(&struct_ty->get_data())) {
-       auto sym = ctxt.get_symbol_table().resolve_global(cls->name);
+      if (auto * strukt = std::get_if<Type::StructType::Struct>(&struct_ty->get_data())) {
+       auto sym = ctxt.get_symbol_table().resolve_global(strukt->name);
         if (sym) {
-          if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
+          if (auto *struct_data = std::get_if<StructData>(&sym->get_kind())) {
             size_t required = 0;
-            for (bool has_def: class_data->has_default)
+            for (bool has_def: struct_data->has_default)
               if (!has_def) ++required;
-            if (arg_types.size() < required || arg_types.size() > class_data->fields.size()) {
-              diag.error(span, "Constructor argument count mismatch: expected " + std::to_string(required) + " to " + std::to_string(class_data->fields.size()) + ", got " + std::to_string(arg_types.size()))
+            if (arg_types.size() < required || arg_types.size() > struct_data->fields.size()) {
+              diag.error(span, "Constructor argument count mismatch: expected " + std::to_string(required) + " to " + std::to_string(struct_data->fields.size()) + ", got " + std::to_string(arg_types.size()))
                   .emit_to(diag);
               return Type::error();
             }
             Unifier unifier(ctxt.get_type_ctxt());
             for (size_t i = 0; i < arg_types.size(); ++i) {
-              auto expected = ast_type_to_semantic_type(class_data->fields[i].second);
+              auto expected = ast_type_to_semantic_type(struct_data->fields[i].second);
               auto result = unifier.unify(arg_types[i], expected);
               if (std::holds_alternative<error::UnifyError>(result)) {
-                diag.error(span, "Constructor argument " + std::to_string(i + 1) + " type mismatch for field '" + class_data->fields[i].first + "'")
+                diag.error(span, "Constructor argument " + std::to_string(i + 1) + " type mismatch for field '" + struct_data->fields[i].first + "'")
                     .emit_to(diag);
                 return Type::error();
               }
             }
-            return Type::class_(cls->name);
+            return Type::struct_(strukt->name);
           }
         }
       }
@@ -505,7 +505,7 @@ namespace cat::semantics {
       }
     }
 
-    diag.error(span, "Called object is not a function or class")
+    diag.error(span, "Called object is not a function or struct")
         .emit_to(diag);
     return Type::error();
   }
@@ -528,24 +528,24 @@ namespace cat::semantics {
               .emit_to(diag);
           return Type::error();
         },
-        [&](const Type::StructType::Class &cls) -> Type {
-          auto sym = ctxt.get_symbol_table().resolve_global(cls.name);
+        [&](const Type::StructType::Struct &strukt) -> Type {
+          auto sym = ctxt.get_symbol_table().resolve_global(strukt.name);
           if (!sym) {
-            diag.error(span, "Class '" + cls.name + "' not found")
+            diag.error(span, "Struct '" + strukt.name + "' not found")
                 .emit_to(diag);
             return Type::error();
           }
           auto univ = ctxt.get_builtins().lookup_universal(member.field);
           if (univ)
-            return univ->get().build_type(Type::class_(cls.name));
-          if (auto *class_data = std::get_if<ClassData>(&sym->get_kind())) {
-            for (const auto &[field_name, field_ty] : class_data->fields) {
+            return univ->get().build_type(Type::struct_(strukt.name));
+          if (auto *struct_data = std::get_if<StructData>(&sym->get_kind())) {
+            for (const auto &[field_name, field_ty] : struct_data->fields) {
               if (field_name == member.field) {
                   return ast_type_to_semantic_type(field_ty);
               }
             }
           }
-          std::string mangled = cls.name + "_" + member.field;
+          std::string mangled = strukt.name + "_" + member.field;
           auto method_sym = ctxt.get_symbol_table().resolve_global(mangled);
           if (method_sym) {
             if (auto *func_data = std::get_if<FunctionData>(&method_sym->get_kind())) {
@@ -561,7 +561,7 @@ namespace cat::semantics {
             }
           }
 
-          diag.error(span, "Field or method '" + member.field + "' not found in class '" + cls.name + "'")
+          diag.error(span, "Field or method '" + member.field + "' not found in struct '" + strukt.name + "'")
               .emit_to(diag);
           return Type::error();
         },
@@ -575,7 +575,7 @@ namespace cat::semantics {
           return Type::error();
         },
         [&](const auto &) -> Type {
-          diag.error(span, "Member access requires a class or list type")
+          diag.error(span, "Member access requires a struct or list type")
               .note("Got: " + resolved.to_string())
               .emit_to(diag);
           return Type::error();
@@ -583,7 +583,7 @@ namespace cat::semantics {
       }, struct_ty->get_data());
     }
 
-    diag.error(span, "Member access requires a class type")
+    diag.error(span, "Member access requires a struct type")
         .note("Got: " + resolved.to_string())
         .emit_to(diag);
     return Type::error();

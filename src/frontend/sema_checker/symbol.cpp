@@ -34,10 +34,10 @@ Symbol Symbol::new_type(string name, Span span) {
   return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
 }
 
-Symbol Symbol::new_class(string name,
+Symbol Symbol::new_struct(string name,
                          vector<std::pair<string, ast::Type>> fields,
                          vector<bool> has_default, Span span) {
-  ClassData data{std::move(fields), std::move(has_default)};
+  StructData data{std::move(fields), std::move(has_default)};
   SymbolKind kind = std::move(data);
   return Symbol(std::move(kind), std::move(name), std::nullopt, 0, span);
 }
@@ -56,7 +56,7 @@ bool Symbol::is_callable() const {
       [](const auto &v) -> bool {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, FunctionData> ||
-                      std::is_same_v<T, ClassData>) {
+                      std::is_same_v<T, StructData>) {
           return true;
         }
         return false;
@@ -76,8 +76,8 @@ const char *Symbol::kindname() const {
           return "type";
         if constexpr (std::is_same_v<T, ParameterData>)
           return "parameter";
-        if constexpr (std::is_same_v<T, ClassData>)
-          return "class";
+        if constexpr (std::is_same_v<T, StructData>)
+          return "struct";
         if constexpr (std::is_same_v<T, TraitData>)
           return "trait";
         return "unknown";

@@ -42,7 +42,7 @@ TEST(AstType, NestedToString) {
     EXPECT_EQ(type_ref(type_int()).to_string(), "ref<int>");
     EXPECT_EQ(type_own(type_int()).to_string(), "own<int>");
     EXPECT_EQ(type_list(type_int()).to_string(), "list<int>");
-    EXPECT_EQ(type_class("Foo").to_string(), "Foo");
+    EXPECT_EQ(type_struct("Foo").to_string(), "Foo");
     EXPECT_EQ(type_ptr(type_ptr(type_int())).to_string(), "ptr<ptr<int>>");
     EXPECT_EQ(type_ref(type_list(type_int())).to_string(), "ref<list<int>>");
     EXPECT_EQ(type_own(type_ptr(type_int())).to_string(), "own<ptr<int>>");

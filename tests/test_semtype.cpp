@@ -64,8 +64,8 @@ TEST(SemType, FuncType) {
   EXPECT_EQ(cloned.to_string(), "(int, float) -> bool");
 }
 
-TEST(SemType, ClassType) {
-  auto t = Type::class_("Foo");
+TEST(SemType, StructType) {
+  auto t = Type::struct_("Foo");
   auto cloned = t.clone();
   EXPECT_EQ(cloned.to_string(), "Foo");
 }

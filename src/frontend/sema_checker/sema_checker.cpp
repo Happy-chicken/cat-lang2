@@ -55,11 +55,10 @@ void SemaChecker::check_function(const FunctionDef &func, Span span,
   for (const auto &param : func.function_header.params) {
     validate_borrow_nesting(param.ty, span, diag);
     BorrowKind kind = std::visit(
-        overloaded{
-            [](const ast::Type::Ref &) { return BorrowKind::Ref; },
-            [](const ast::Type::CRef &) { return BorrowKind::CRef; },
-            [](const ast::Type::Own &) { return BorrowKind::Own; },
-            [](const auto &) { return BorrowKind::None; }},
+        overloaded{[](const ast::Type::Ref &) { return BorrowKind::Ref; },
+                   [](const ast::Type::CRef &) { return BorrowKind::CRef; },
+                   [](const ast::Type::Own &) { return BorrowKind::Own; },
+                   [](const auto &) { return BorrowKind::None; }},
         param.ty.data);
     Symbol param_sym =
         Symbol::new_parameter(param.name, param.ty.clone(), kind, span);
@@ -84,21 +83,21 @@ void SemaChecker::check_function(const FunctionDef &func, Span span,
 
 // Forward declaration used by check_impl
 static void validate_trait_impl(const string &trait_name,
-                                const string &class_name,
+                                const string &struct_name,
                                 const vector<FunctionDef> &methods, Span span,
                                 semantics::SemaCtxt &ctx,
                                 error::DiagCtxt &diag);
 
 void SemaChecker::check_impl(const Impl &imp, Span span,
                              semantics::SemaCtxt &ctx, error::DiagCtxt &diag) {
-  if (ctx.get_symbol_table().resolve_global(imp.class_name) == nullptr) {
-    diag.error(span, "Class '" + imp.class_name + "' is not declared")
+  if (ctx.get_symbol_table().resolve_global(imp.struct_name) == nullptr) {
+    diag.error(span, "Struct '" + imp.struct_name + "' is not declared")
         .emit_to(diag);
   }
 
   // Validate that all trait-required methods are implemented
   if (imp.trait_name.has_value())
-    validate_trait_impl(*imp.trait_name, imp.class_name, imp.methods, span, ctx,
+    validate_trait_impl(*imp.trait_name, imp.struct_name, imp.methods, span, ctx,
                         diag);
 
   for (const auto &method : imp.methods) {
@@ -117,7 +116,7 @@ void SemaChecker::check_block(const Block &block, Span span,
 
 // Check that an impl block provides all methods required by its trait.
 static void validate_trait_impl(const string &trait_name,
-                                const string &class_name,
+                                const string &struct_name,
                                 const vector<FunctionDef> &methods, Span span,
                                 semantics::SemaCtxt &ctx,
                                 error::DiagCtxt &diag) {
@@ -138,8 +137,8 @@ static void validate_trait_impl(const string &trait_name,
                               });
     if (found == methods.end()) {
       diag.error(span, "Method '" + required + "' is required by trait '" +
-                           trait_name + "' but not implemented in class '" +
-                           class_name + "'")
+                           trait_name + "' but not implemented in struct '" +
+                           struct_name + "'")
           .emit_to(diag);
     }
   }
@@ -158,13 +157,13 @@ static InitTypeInfo infer_type_from_init(const ExprNode &init,
     result.var_ty = ast::type_list(ast::Type{});
   } else if (auto *call = std::get_if<CallExpr>(&init.expr)) {
     if (auto *cv = std::get_if<Variable>(&call->callee->expr)) {
-      auto class_sym = ctx.get_symbol_table().resolve(cv->name);
-      if (class_sym &&
-          std::holds_alternative<ClassData>(class_sym->get_kind())) {
-        result.var_ty = ast::Type(ast::Type::Class{cv->name});
-      } else if (class_sym &&
-                 std::holds_alternative<FunctionData>(class_sym->get_kind())) {
-        auto &func_data = std::get<FunctionData>(class_sym->get_kind());
+      auto strukt_sym = ctx.get_symbol_table().resolve(cv->name);
+      if (strukt_sym &&
+          std::holds_alternative<StructData>(strukt_sym->get_kind())) {
+        result.var_ty = ast::Type(ast::Type::Struct{cv->name});
+      } else if (strukt_sym &&
+                 std::holds_alternative<FunctionData>(strukt_sym->get_kind())) {
+        auto &func_data = std::get<FunctionData>(strukt_sym->get_kind());
         result.var_ty = func_data.return_type.clone();
       }
     }
@@ -189,19 +188,13 @@ void SemaChecker::check_stmt(const StmtNode &stmt, Span span,
           [&](const VarDefStmt &var_def) {
             BorrowKind kind = BorrowKind::None;
             if (var_def.ty.has_value()) {
-              kind = std::visit(overloaded{[](const ast::Type::Ref &) {
-                                             return BorrowKind::Ref;
-                                           },
-                                           [](const ast::Type::CRef &) {
-                                             return BorrowKind::CRef;
-                                           },
-                                           [](const ast::Type::Own &) {
-                                             return BorrowKind::Own;
-                                           },
-                                           [](const auto &) {
-                                             return BorrowKind::None;
-                                           }},
-                                var_def.ty->data);
+              kind = std::visit(
+                  overloaded{
+                      [](const ast::Type::Ref &) { return BorrowKind::Ref; },
+                      [](const ast::Type::CRef &) { return BorrowKind::CRef; },
+                      [](const ast::Type::Own &) { return BorrowKind::Own; },
+                      [](const auto &) { return BorrowKind::None; }},
+                  var_def.ty->data);
               if (kind != BorrowKind::None && !var_def.init.has_value()) {
                 diag.error(span, "Variable '" + var_def.name +
                                      "' of reference or ownership type must be "
@@ -309,13 +302,13 @@ static string extract_call_name(const ExprNode &callee) {
 
 // Describes the resolved target of a call expression.
 struct CallTargetInfo {
-  string resolved_name; // symbol-table name (mangled for class methods)
+  string resolved_name; // symbol-table name (mangled for struct methods)
   string display_name;  // user-written name (for diagnostics)
   std::optional<runtime::MethodMeta> builtin_meta;
 };
 
 // For obj.method(...), resolve whether the call goes to a list builtin
-// or a class method.  Returns nullopt when obj is not a simple variable
+// or a struct method.  Returns nullopt when obj is not a simple variable
 // (the type checker will resolve it later).
 static optional<CallTargetInfo> resolve_method_target(const string &func_name,
                                                       const CallExpr &call,
@@ -349,17 +342,17 @@ static optional<CallTargetInfo> resolve_method_target(const string &func_name,
     return std::nullopt;
   }
 
-  // universal builtins that auto-apply to class / trait-object
+  // universal builtins that auto-apply to struct / trait-object
   auto univ = ctx.get_builtins().lookup_universal(func_name);
   if (univ) {
-    if (std::get_if<ast::Type::Class>(&ty.data) ||
+    if (std::get_if<ast::Type::Struct>(&ty.data) ||
         std::get_if<ast::Type::TraitObject>(&ty.data))
       return CallTargetInfo{func_name, func_name, univ->get().meta};
   }
 
-  // class method → mangle ClassName_methodName
-  if (auto *cls = std::get_if<ast::Type::Class>(&ty.data))
-    return CallTargetInfo{cls->name + "_" + func_name, func_name, std::nullopt};
+  // struct method → mangle StructName_methodName
+  if (auto *strukt = std::get_if<ast::Type::Struct>(&ty.data))
+    return CallTargetInfo{strukt->name + "_" + func_name, func_name, std::nullopt};
 
   return std::nullopt;
 }
@@ -370,8 +363,8 @@ static void check_builtin_arity(const runtime::MethodMeta &meta,
                                 Span span, error::DiagCtxt &diag) {
   if (arg_count != meta.arity) {
     diag.error(span, "'" + func_name + "' expects " +
-                         std::to_string(meta.arity) +
-                         " arguments, got " + std::to_string(arg_count))
+                         std::to_string(meta.arity) + " arguments, got " +
+                         std::to_string(arg_count))
         .emit_to(diag);
   }
 }
@@ -390,7 +383,7 @@ static void clear_list_len_for_mutating_builtin(const runtime::MethodMeta &meta,
     sym->clear_known_list_len();
 }
 
-// Check arity for a user-defined callable (function, class constructor,
+// Check arity for a user-defined callable (function, struct constructor,
 // or variable holding a function value).
 static void check_symbol_arity(const Symbol &sym, const string &name,
                                bool is_method, size_t arg_count, Span span,
@@ -409,13 +402,13 @@ static void check_symbol_arity(const Symbol &sym, const string &name,
                   .emit_to(diag);
             }
           },
-          [&](const ClassData &c) {
+          [&](const StructData &c) {
             size_t required = 0;
             for (bool has_def : c.has_default)
               if (!has_def)
                 ++required;
             if (arg_count < required || arg_count > c.fields.size()) {
-              diag.error(span, "Class '" + name + "' expects " +
+              diag.error(span, "Struct '" + name + "' expects " +
                                    std::to_string(required) + " to " +
                                    std::to_string(c.fields.size()) +
                                    " arguments, but " +
@@ -464,7 +457,7 @@ static void check_call_expr(const CallExpr &call, Span span,
 
   bool is_method = std::holds_alternative<MemberExpr>(call.callee->expr);
 
-  // (5) resolve call target (builtin / mangled class method / plain name)
+  // (5) resolve call target (builtin / mangled struct method / plain name)
   optional<CallTargetInfo> target;
   if (is_method) {
     target = resolve_method_target(func_name, call, ctx, diag, span);
@@ -487,8 +480,7 @@ static void check_call_expr(const CallExpr &call, Span span,
   if (!sym) {
     if (ctx.get_builtins().is_standalone_declared(func_name)) {
       auto desc = ctx.get_builtins().lookup_standalone(func_name);
-      if (desc &&
-          (func_name == "print" || func_name == "println")) {
+      if (desc && (func_name == "print" || func_name == "println")) {
         if (auto *lit = std::get_if<cat::LiteralExpr>(&call.args[0]->expr)) {
           if (!std::get_if<std::string>(&lit->lit)) {
             diag.error(span, "'" + func_name +
@@ -665,20 +657,13 @@ void SemaChecker::check_expr(const ExprNode &expr, Span span,
             ctx.get_symbol_table().enter_scope(ScopeKind::Function);
             for (size_t i = 0; i < lambda.params.size(); ++i) {
               auto &pt = lambda.params[i];
-              BorrowKind kind =
-                  std::visit(overloaded{[](const ast::Type::Ref &) {
-                                          return BorrowKind::Ref;
-                                        },
-                                        [](const ast::Type::CRef &) {
-                                          return BorrowKind::CRef;
-                                        },
-                                        [](const ast::Type::Own &) {
-                                          return BorrowKind::Own;
-                                        },
-                                        [](const auto &) {
-                                          return BorrowKind::None;
-                                        }},
-                             pt.ty.data);
+              BorrowKind kind = std::visit(
+                  overloaded{
+                      [](const ast::Type::Ref &) { return BorrowKind::Ref; },
+                      [](const ast::Type::CRef &) { return BorrowKind::CRef; },
+                      [](const ast::Type::Own &) { return BorrowKind::Own; },
+                      [](const auto &) { return BorrowKind::None; }},
+                  pt.ty.data);
               Symbol param_sym = Symbol::new_parameter(
                   lambda.params[i].name, pt.ty.clone(), kind, span);
               ctx.get_symbol_table().declare(std::move(param_sym));
@@ -702,10 +687,10 @@ void SemaChecker::check_global_var(const GlobalVar &gv, Span span,
   }
 }
 
-void SemaChecker::check_class_defaults(const Class &cls,
-                                       semantics::SemaCtxt &ctx,
-                                       error::DiagCtxt &diag) {
-  for (const auto &field : cls.fields) {
+void SemaChecker::check_struct_defaults(const Struct &strukt,
+                                        semantics::SemaCtxt &ctx,
+                                        error::DiagCtxt &diag) {
+  for (const auto &field : strukt.fields) {
     validate_borrow_nesting(field.ty, Span{}, diag);
     if (field.init.has_value()) {
       check_expr(*field.init, field.init->span, ctx, diag);

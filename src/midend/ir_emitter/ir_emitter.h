@@ -29,15 +29,15 @@ public:
   void dump_module(std::ostream &os);
   llvm::Type *infer_lit_type(const Expr &expr);
   void compile(const Program &program);
-  void build_classes(const Program &program);
-  void build_class_constructors();
-  void compile_class_constructor(const string &name,
+  void build_structs(const Program &program);
+  void build_struct_constructors();
+  void compile_struct_constructor(const string &name,
                                  llvm::StructType *struct_ty,
-                                 const ClassInfo &cls_info);
-  void compile_class_clone(const string &name, llvm::StructType *struct_ty,
-                           const ClassInfo &cls_info);
+                                 const StructInfo &info);
+  void compile_struct_clone(const string &name, llvm::StructType *struct_ty,
+                           const StructInfo &info);
   void compile_global_var(const GlobalVar &gv, Span span);
-  void compile_method(const string &cls_name, const FunctionDef &func,
+  void compile_method(const string &struct_name, const FunctionDef &func,
                       Span span);
   void compile_function(const FunctionDef &func, Span span);
   void compile_named_function(const FunctionDef &func, const string &name,
@@ -112,7 +112,7 @@ private:
   vector<llvm::Value *> compile_args(llvm::Function *fn,
                                      const vector<uptr<ExprNode>> &args,
                                      size_t param_offset,
-                                     const ClassInfo *ctor_info = nullptr);
+                                     const StructInfo *ctor_info = nullptr);
   void invalidate_owned_args(const string &fn_name,
                              const vector<uptr<ExprNode>> &args,
                              size_t param_offset);

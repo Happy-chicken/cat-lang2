@@ -117,13 +117,13 @@ TEST(Parser, GlobalVar) {
     EXPECT_EQ(gv->ty->to_string(), "int");
 }
 
-TEST(Parser, ClassDef) {
-    auto [prog, diag] = parse_source("class Point { let x: int = 0; let y: int = 0; }");
+TEST(Parser, StructDef) {
+    auto [prog, diag] = parse_source("struct Point { let x: int = 0; let y: int = 0; }");
     ASSERT_EQ(prog.items.size(), 1u);
-    auto *cls = std::get_if<Class>(&prog.items[0].item);
-    ASSERT_NE(cls, nullptr);
-    EXPECT_EQ(cls->name, "Point");
-    EXPECT_EQ(cls->fields.size(), 2u);
+    auto *strukt = std::get_if<Struct>(&prog.items[0].item);
+    ASSERT_NE(strukt, nullptr);
+    EXPECT_EQ(strukt->name, "Point");
+    EXPECT_EQ(strukt->fields.size(), 2u);
 }
 
 TEST(Parser, ListTypeParam) {
